@@ -133,18 +133,30 @@ void SerialProtocol::processCommand(String command, OneWireHandler& owHandler, S
     }
   }
   else if (command == "VERSION") {
-    serial.println("ESP32-C3 1-Wire Bridge v1.0");
+    #ifndef BOARD_NAME
+      #define BOARD_NAME "ESP32"
+    #endif
+    serial.print(BOARD_NAME);
+    serial.println(" 1-Wire Bridge v1.0");
   }
   else if (command == "DEBUG") {
     // Debug command to check 1-wire bus
-    serial.println("DEBUG: Testing 1-wire bus on GPIO4...");
+    #ifndef ONEWIRE_PIN
+      #define ONEWIRE_PIN 4
+    #endif
+
+    serial.print("DEBUG: Testing 1-wire bus on GPIO");
+    serial.print(ONEWIRE_PIN);
+    serial.println("...");
     serial.println("  Required: 4.7k pullup to 3.3V + EEPROM data line");
     serial.println("");
 
     // Check pin state
-    pinMode(4, INPUT);
-    int pinState = digitalRead(4);
-    serial.print("  GPIO4 state (idle): ");
+    pinMode(ONEWIRE_PIN, INPUT);
+    int pinState = digitalRead(ONEWIRE_PIN);
+    serial.print("  GPIO");
+    serial.print(ONEWIRE_PIN);
+    serial.print(" state (idle): ");
     serial.println(pinState ? "HIGH (good - pullup present)" : "LOW (BAD - no pullup or short to ground!)");
     serial.println("");
 
