@@ -116,8 +116,12 @@ class ESP32Bridge:
             hex_data = response[5:].strip()
             try:
                 return bytes.fromhex(hex_data)
-            except ValueError:
+            except ValueError as e:
+                print(f"ERROR: Failed to parse hex data: {e}")
+                print(f"Response was: {response[:100]}")
                 return None
+        else:
+            print(f"ERROR: ESP32 read failed. Response: {response[:100]}")
         return None
 
     def onewire_write(self, data):

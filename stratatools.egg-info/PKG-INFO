@@ -19,6 +19,7 @@ License-File: LICENSE
 Requires-Dist: pycryptodome
 Requires-Dist: pyserial
 Requires-Dist: protobuf
+Requires-Dist: PyQt5>=5.15.0
 Provides-Extra: testing
 Requires-Dist: pytest; extra == "testing"
 Provides-Extra: rpi

@@ -10,27 +10,74 @@ from scratch.
 
 ## Installation
 
-This tool requires Python 2.7.
+**Note: This version has been updated to Python 3.6+**
 
-You can simply installs Stratatools using pip:
+You can simply install Stratatools using pip:
 
 ```
-$ pip2 install stratatools
+$ pip3 install stratatools
 ```
 
 or from source:
 
 ```
-$ python2 ./setup.py build
-$ python2 ./setup.py install
+$ python3 ./setup.py build
+$ python3 ./setup.py install
 ```
 
-It will automagically pull the dependency:
+or in development mode:
+
+```
+$ pip3 install -e .
+```
+
+It will automagically pull the dependencies:
 
 - [pycryptodome](https://www.pycryptodome.org)
 - [pyserial](https://github.com/pyserial/pyserial/)
 - [protobuf](https://github.com/google/protobuf/tree/master/python)
-- [pyudev](https://github.com/pyudev/pyudev)
+- [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) (for GUI)
+- [pyudev](https://github.com/pyudev/pyudev) (optional, for Raspberry Pi)
+
+## Graphical User Interface (NEW!)
+
+A modern PyQt5 GUI is now available for reading, editing, and writing cartridges via ESP32 bridge:
+
+```bash
+# Launch GUI
+$ stratatools_gui
+
+# Or directly
+$ python3 stratatools_gui.py
+
+# Or on Windows
+> launch_gui.bat
+```
+
+**Features:**
+- Connect to ESP32 bridge via USB
+- Search and read cartridges
+- Edit cartridge parameters (material, quantity, dates)
+- Create new cartridges from scratch
+- Save/load cartridge files
+- Refill cartridges with one click
+- Hex viewer and debug console
+
+See [GUI_README.md](GUI_README.md) for detailed GUI documentation.
+
+**Hardware Requirements:**
+- ESP32 with custom 1-wire bridge firmware
+- USB connection to PC
+- GPIO4 connected to EEPROM with 4.7kΩ pull-up resistor
+
+**ESP32 Helper Scripts:**
+```bash
+# Read cartridge via ESP32
+$ stratatools_esp32_read /dev/ttyUSB0 output.bin
+
+# Write cartridge via ESP32
+$ stratatools_esp32_write /dev/ttyUSB0 input.bin
+```
 
 ## Cartridge Usage
 

@@ -4,4 +4,5 @@ stratatools_bp_read = stratatools.helper.bp_read:main
 stratatools_bp_write = stratatools.helper.bp_write:main
 stratatools_esp32_read = stratatools.helper.esp32_read:main
 stratatools_esp32_write = stratatools.helper.esp32_write:main
+stratatools_gui = stratatools_gui:main
 stratatools_rpi_daemon = stratatools.helper.rpi_daemon:main

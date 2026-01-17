@@ -1,6 +1,7 @@
 pycryptodome
 pyserial
 protobuf
+PyQt5>=5.15.0
 
 [rpi]
 pyudev

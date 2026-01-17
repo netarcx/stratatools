@@ -25,6 +25,7 @@ setup(
         'pycryptodome',
         'pyserial',
         'protobuf',
+        'PyQt5>=5.15.0',
     ],
     extras_require={
         'testing': ['pytest'],
@@ -34,6 +35,7 @@ setup(
     entry_points={
         'console_scripts': [
             'stratatools=stratatools.console_app:main',
+            'stratatools_gui=stratatools_gui:main',
             'stratatools_bp_read=stratatools.helper.bp_read:main',
             'stratatools_bp_write=stratatools.helper.bp_write:main',
             'stratatools_rpi_daemon=stratatools.helper.rpi_daemon:main',

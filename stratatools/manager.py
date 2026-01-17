@@ -66,7 +66,7 @@ class Manager:
         # material id
         struct.pack_into("<d", eeprom, 0x08, material.get_id_from_name(cartridge.material_name))
         # manufacturing lot
-        struct.pack_into("<20s", eeprom, 0x10, str(cartridge.manufacturing_lot))
+        struct.pack_into("<20s", eeprom, 0x10, cartridge.manufacturing_lot.encode('utf-8').ljust(20, b'\x00'))
         # version (not sure)
         struct.pack_into("<H", eeprom, 0x24, cartridge.version)
         # manufacturing date
@@ -99,7 +99,7 @@ class Manager:
         # Checksum current material quantity
         struct.pack_into("<H", eeprom, 0x62, self.checksum.checksum(eeprom[0x58:0x60]))
         # signature (not sure, not usedu)
-        struct.pack_into("<9s", eeprom, 0x68, cartridge.signature)
+        struct.pack_into("<9s", eeprom, 0x68, cartridge.signature.encode('utf-8') if cartridge.signature else b'STRATASYS')
 
         return eeprom
 
@@ -163,14 +163,14 @@ class Manager:
         c = cartridge_pb2.Cartridge()
         c.serial_number = serial_number
         c.material_name = material_name
-        c.manufacturing_lot = manufacturing_lot
+        c.manufacturing_lot = manufacturing_lot.decode('utf-8')
         c.manufacturing_date.FromDatetime(mfg_datetime)
         c.last_use_date.FromDatetime(use_datetime)
         c.initial_material_quantity = initial_material_quantity
         c.current_material_quantity = current_material_quantity
         c.key_fragment = key_fragment
         c.version = version
-        c.signature = signature
+        c.signature = signature.decode('utf-8')
 
         return c
 
