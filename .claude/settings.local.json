@@ -12,7 +12,9 @@
       "Bash(/Users/trentfox/Library/Python/3.12/bin/stratatools_esp32_read /dev/cu.usbserial-0001 /tmp/test_cartridge.bin)",
       "Bash(pip3 show:*)",
       "Bash(xxd:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(find:*)",
+      "Bash(pio boards:*)"
     ]
   }
 }
