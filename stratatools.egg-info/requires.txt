@@ -1,0 +1,9 @@
+pycryptodome
+pyserial
+protobuf
+
+[rpi]
+pyudev
+
+[testing]
+pytest

@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m pytest:*)",
+      "Bash(python3:*)",
+      "Bash(PYTHONPATH=/Users/trentfox/Code/stratatools python3:*)",
+      "Bash(protoc:*)",
+      "Bash(ls:*)",
+      "Bash(PYTHONPATH=/Users/trentfox/Code/stratatools PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python python3:*)",
+      "Bash(pio run:*)",
+      "Bash(pip3 install:*)",
+      "Bash(/Users/trentfox/Library/Python/3.12/bin/stratatools_esp32_read /dev/cu.usbserial-0001 /tmp/test_cartridge.bin)",
+      "Bash(pip3 show:*)",
+      "Bash(xxd:*)"
+    ]
+  }
+}
