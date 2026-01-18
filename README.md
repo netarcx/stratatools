@@ -66,9 +66,9 @@ $ python3 stratatools_gui.py
 See [GUI_README.md](GUI_README.md) for detailed GUI documentation.
 
 **Hardware Requirements:**
-- ESP32 with custom 1-wire bridge firmware
+- ESP32, Raspberry Pi Pico 2, or other compatible hardware with custom 1-wire bridge firmware
 - USB connection to PC
-- GPIO4 connected to EEPROM with 4.7kΩ pull-up resistor
+- GPIO connected to EEPROM with 4.7kΩ pull-up resistor (GPIO4 for ESP32, GPIO16 for Pico 2)
 
 **ESP32 Helper Scripts:**
 ```bash
@@ -399,6 +399,57 @@ $ cp ~/eeprom_new.bin /sys/bus/w1/devices/w1_bus_master1/23-xxxxxxxxxxxx/eeprom
 
 To interface with a DS2432, you'll need to follow the steps found in this
 project: https://github.com/bvanheu/ds2432-linux .
+
+### Raspberry Pi Pico 2 Auto-Refill
+
+A standalone auto-refill device using Raspberry Pi Pico 2 (RP2350) that works with the `autorefill_daemon.py`:
+
+**Hardware Setup:**
+- Use GPIO16 (pin 21) for the data
+- Use GROUND (pin 38) on the ground
+- Use 3.3V Power (pin 36) to pull-up the data line using a 4.7kΩ resistor
+- Optional: GPIO15 (pin 20) for manual refill button
+- Built-in LED (GPIO25) shows status
+
+Use the following schematic as a reference:
+
+```
+Raspberry Pi Pico 2
+
+     3.3V    >---+
+                 |
+            4.7k Z    eeprom
+                 |   +------+
+    GPIO16   >---+---| Data |
+                     |      |
+    GROUND   >-------| Gnd  |
+                     +------+
+
+    GPIO15   >---[Button]---| Gnd  |  (optional - manual refill)
+```
+
+**Software Setup:**
+
+Build and upload firmware:
+```
+$ cd pico2_autorefill
+$ pio run --target upload
+```
+
+Run the auto-refill daemon:
+```
+$ python3 autorefill_daemon.py /dev/ttyACM0
+```
+
+**Features:**
+- Automatic cartridge detection and refill
+- LED status indicators (slow blink: waiting, fast blink: reading, solid: OK, triple blink: refilling)
+- Optional manual refill button
+- Works with existing autorefill daemon
+- USB-powered (~$6 hardware cost)
+- Fast refill cycle (~35 seconds)
+
+See [pico2_autorefill/README.md](pico2_autorefill/README.md) for detailed documentation.
 
 ## Acknowledgement
 

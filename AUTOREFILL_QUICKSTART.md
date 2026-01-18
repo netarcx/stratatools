@@ -1,14 +1,15 @@
 # Auto-Refill Quick Start Guide
 
-Complete guide to setting up autonomous cartridge refilling with ESP32/ESP8266 or Raspberry Pi.
+Complete guide to setting up autonomous cartridge refilling with ESP32/ESP8266, Raspberry Pi Pico 2, or Raspberry Pi.
 
 ## Overview
 
-Three ways to auto-refill cartridges:
+Four ways to auto-refill cartridges:
 
 1. **ESP32 + Computer Daemon** - Device detects, computer refills
 2. **ESP8266 + Computer Daemon** - Device detects, computer refills
-3. **Raspberry Pi Standalone** - Fully autonomous, no computer needed
+3. **Raspberry Pi Pico 2 + Computer Daemon** - Device detects, computer refills (affordable alternative)
+4. **Raspberry Pi Standalone** - Fully autonomous, no computer needed
 
 ## Method 1: ESP32/ESP8266 with Daemon
 
@@ -59,7 +60,71 @@ python3 autorefill_daemon.py /dev/cu.usbserial-0001 \
 - **Triple blink**: Refilling in progress
 - **Rapid blink**: Error
 
-## Method 2: Raspberry Pi Standalone
+## Method 3: Raspberry Pi Pico 2 with Daemon
+
+### Hardware Setup
+
+```
+Raspberry Pi Pico 2   Cartridge EEPROM
+──────────────────────────────────────────
+GPIO16 (Pin 21)   →   DQ (Pin 4)
+3.3V (Pin 36)     →   4.7kΩ → GPIO16
+3.3V (Pin 36)     →   VCC (Pin 8)
+GND (Pin 38)      →   GND (Pin 1)
+
+Optional:
+GPIO15 (Pin 20)   →   Button to GND
+GPIO25 (Built-in) →   Status LED
+```
+
+### Software Setup
+
+**1. Build and flash firmware**
+```bash
+cd pico2_autorefill
+
+# Build firmware
+pio run
+
+# Upload (hold BOOTSEL button while plugging in USB)
+pio run --target upload
+
+# Or manually copy .uf2 file to Pico drive
+cp .pio/build/pico2/firmware.uf2 /Volumes/RP2350/
+```
+
+**2. Run the daemon on your computer**
+```bash
+# Basic usage
+python3 autorefill_daemon.py /dev/ttyACM0
+
+# With options
+python3 autorefill_daemon.py /dev/ttyACM0 \
+    --machine prodigy \
+    --threshold 10.0 \
+    --auto-detect
+```
+
+**3. Insert cartridge** - automatic refill if below threshold!
+
+### LED Status
+
+- **Slow blink**: Waiting for cartridge
+- **Fast blink**: Reading cartridge
+- **Solid ON**: Cartridge OK (above threshold)
+- **Triple blink**: Refilling in progress
+- **Rapid blink**: Error
+
+**Advantages:**
+- Very affordable (~$6 USD)
+- USB-powered
+- Built-in LED
+- Fast refill (~35 seconds)
+- Modern USB-C connector
+
+See [pico2_autorefill/README.md](pico2_autorefill/README.md) for detailed documentation.
+
+## Method 4: Raspberry Pi Standalone
 
 ### Hardware Setup
 
@@ -253,7 +318,11 @@ sudo usermod -a -G dialout $USER
 
 **macOS:**
 ```bash
+# ESP32/ESP8266
 ls -l /dev/cu.usbserial-* /dev/tty.usbserial-*
+
+# Pico 2
+ls -l /dev/cu.usbmodem* /dev/tty.usbmodem*
 ```
 
 **Windows:**
@@ -321,6 +390,12 @@ sudo systemctl restart pigpiod
 - **Write time:** 20-30 seconds
 - **Total refill:** ~35 seconds
 
+### Raspberry Pi Pico 2 + Daemon
+- **Detection time:** <1 second
+- **Read time:** 1-2 seconds
+- **Write time:** 20-30 seconds
+- **Total refill:** ~35 seconds
+
 ### Raspberry Pi Standalone
 - **Detection time:** ~5 seconds (slower polling)
 - **Read time:** 2-3 seconds
@@ -381,21 +456,25 @@ Now you have a standalone refill station!
 
 ## Comparison
 
-| Feature | ESP32 + Daemon | ESP8266 + Daemon | Raspberry Pi |
-|---------|----------------|------------------|--------------|
-| **Cost** | $7 + laptop | $5 + laptop | $15-35 |
-| **Speed** | Fast | Fast | Medium |
-| **Autonomous** | No | No | Yes |
-| **Power** | <1W | <1W | ~2.5W |
-| **Portability** | Need laptop | Need laptop | Standalone |
-| **Setup** | Flash + Python | Flash + Python | Python only |
-| **Best for** | Dev/test | Dev/test | Production |
+| Feature | ESP32 + Daemon | ESP8266 + Daemon | Pico 2 + Daemon | Raspberry Pi |
+|---------|----------------|------------------|-----------------|--------------|
+| **Cost** | $7 + laptop | $5 + laptop | $6 + laptop | $15-35 |
+| **Speed** | Fast | Fast | Fast | Medium |
+| **Autonomous** | No | No | No | Yes |
+| **Power** | <1W | <1W | <1W | ~2.5W |
+| **Portability** | Need laptop | Need laptop | Need laptop | Standalone |
+| **Setup** | Flash + Python | Flash + Python | Flash + Python | Python only |
+| **Best for** | Dev/test | Dev/test | Dev/test | Production |
 
 ## Files Overview
 
 ```
 stratatools/
 ├── esp32_autorefill/           # ESP32/ESP8266 firmware
+│   ├── platformio.ini          # Build config
+│   ├── src/main.cpp            # Device firmware
+│   └── README.md
+├── pico2_autorefill/           # Raspberry Pi Pico 2 firmware
 │   ├── platformio.ini          # Build config
 │   ├── src/main.cpp            # Device firmware
 │   └── README.md
@@ -410,7 +489,7 @@ stratatools/
 
 ## Next Steps
 
-1. **Build firmware** → Flash to ESP32/ESP8266
+1. **Build firmware** → Flash to ESP32/ESP8266/Pico 2
 2. **Test device** → Insert cartridge, check serial output
 3. **Run daemon** → Start auto-refill daemon
 4. **Refill cartridges** → Insert and watch it work!
