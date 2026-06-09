@@ -47,7 +47,13 @@ class ESP32Bridge:
 
     def _send_command(self, command):
         """
-        Send a command to the ESP32
+        Send a command to the ESP32 and return its single-line response.
+
+        The input buffer is drained first so a leftover line from a previous
+        response (e.g. an extra line, a multi-line DEBUG reply, or a boot
+        message) can never be mistaken for this command's reply. Without this,
+        rapid back-to-back operations desync the protocol and surface as
+        spurious "No device found" / read failures.
 
         Args:
             command: Command string to send
@@ -55,7 +61,16 @@ class ESP32Bridge:
         Returns:
             Response string from ESP32
         """
+        try:
+            self.serial.reset_input_buffer()
+        except Exception:
+            # Fall back to draining line-by-line if the driver lacks the call
+            self._clear_buffer()
         self.serial.write((command + "\n").encode())
+        try:
+            self.serial.flush()
+        except Exception:
+            pass
         response = self.serial.readline().decode('ascii', errors='ignore').strip()
         return response
 

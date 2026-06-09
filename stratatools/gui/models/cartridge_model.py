@@ -56,7 +56,7 @@ class CartridgeModel(QObject):
             "last_use_date": use_date,
             "initial_material_quantity": c.initial_material_quantity,
             "current_material_quantity": c.current_material_quantity,
-            "key_fragment": c.key_fragment.hex() if c.key_fragment else "",
+            "key_fragment": c.key_fragment.decode("ascii", errors="ignore") if c.key_fragment else "",
             "version": c.version,
             "signature": c.signature,
         }
@@ -102,18 +102,24 @@ class CartridgeModel(QObject):
             if isinstance(data["last_use_date"], datetime):
                 c.last_use_date.FromDatetime(data["last_use_date"])
 
-        # Key fragment (convert from hex string if needed)
+        # Key fragment is stored as a 16-char ASCII hex string (the form the
+        # manager/encoder expects, e.g. b"4142434441424344").
         if "key_fragment" in data:
             key_frag = data["key_fragment"]
             if isinstance(key_frag, str):
-                # Remove spaces and convert from hex
+                # Remove spaces/separators and keep the hex string
                 key_frag = key_frag.replace(" ", "").replace(":", "")
                 try:
-                    c.key_fragment = bytes.fromhex(key_frag)
+                    bytes.fromhex(key_frag)  # validate it is hex
+                    c.key_fragment = key_frag.encode("ascii")
                 except ValueError:
                     pass  # Invalid hex string, ignore
             elif isinstance(key_frag, bytes):
-                c.key_fragment = key_frag
+                # Accept either raw 8 bytes or an already-encoded hex string
+                if len(key_frag) == 8:
+                    c.key_fragment = key_frag.hex().encode("ascii")
+                else:
+                    c.key_fragment = key_frag
 
         self.data_changed.emit()
 
@@ -153,9 +159,9 @@ class CartridgeModel(QObject):
         if len(c.signature) > 9:
             errors.append("Signature must be 9 characters or less")
 
-        # Key fragment
-        if len(c.key_fragment) != 8:
-            errors.append("Key fragment must be exactly 8 bytes")
+        # Key fragment is a 16-char ASCII hex string (8 decoded bytes)
+        if len(c.key_fragment) != 16:
+            errors.append("Key fragment must be a 16-character hex string")
 
         return errors
 

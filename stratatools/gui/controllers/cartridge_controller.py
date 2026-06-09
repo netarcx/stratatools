@@ -4,6 +4,7 @@ Cartridge Controller
 Business logic layer for cartridge operations.
 """
 
+import datetime
 import os
 from PyQt5.QtCore import QObject, pyqtSignal
 
@@ -30,6 +31,9 @@ class CartridgeController(QObject):
     progress_updated = pyqtSignal(str, int)  # message: str, percent: int
     error_occurred = pyqtSignal(str)  # error_message: str
     log_message = pyqtSignal(str)  # log_message: str
+    raw_data_read = pyqtSignal(bytes)  # raw EEPROM bytes from the last read
+    firmware_info = pyqtSignal(str)  # firmware/version banner from the bridge
+    busy_changed = pyqtSignal(bool)  # True while a background operation runs
 
     # Error messages mapping
     ERROR_MESSAGES = {
@@ -50,6 +54,31 @@ class CartridgeController(QObject):
         self.current_rom = None
         self.machine_type = "prodigy"  # Default
         self.connected = False
+        self.last_raw_data = None  # raw bytes from the most recent EEPROM read
+        self.last_write_verified = None  # True/False/None for the last write
+        self.firmware = None  # bridge firmware/version banner
+        self._busy_count = 0
+
+        # Auto-backup: dump the existing EEPROM to a timestamped file before
+        # every (destructive) write so a write can always be undone.
+        self.backup_enabled = True
+        self.backup_dir = os.path.join(
+            os.path.expanduser("~"), ".stratatools", "backups")
+
+    def set_busy(self, busy):
+        """Track in-flight background work and emit busy_changed on edge.
+
+        Uses a counter so overlapping tasks don't prematurely clear the busy
+        state; busy_changed fires only on the 0<->1 transitions.
+        """
+        if busy:
+            self._busy_count += 1
+            if self._busy_count == 1:
+                self.busy_changed.emit(True)
+        else:
+            self._busy_count = max(0, self._busy_count - 1)
+            if self._busy_count == 0:
+                self.busy_changed.emit(False)
 
     def connect(self, port):
         """
@@ -72,6 +101,14 @@ class CartridgeController(QObject):
 
             if not self.bridge.initialize():
                 raise Exception("Failed to initialize ESP32 bridge")
+
+            # Capture the firmware/version banner for the device panel
+            try:
+                self.firmware = self.bridge._send_command("VERSION")
+            except Exception:
+                self.firmware = None
+            if self.firmware:
+                self.firmware_info.emit(self.firmware)
 
             self.connected = True
             self.connection_changed.emit(True)
@@ -153,34 +190,54 @@ class CartridgeController(QObject):
             self.log(f"Device search failed: {e}")
             return None
 
-    def read_cartridge(self, rom_address, machine_type):
+    def read_cartridge(self, rom_address, machine_type, silent=False):
         """
         Read and decode cartridge from EEPROM.
 
         Args:
             rom_address (str): ROM address from search
             machine_type (str): Machine type (fox, prodigy, etc.)
+            silent (bool): When True, suppress the error_occurred signal on
+                failure (used by auto-detect, which probes many machine types).
 
         Returns:
             Cartridge: Decoded cartridge object or None on failure
 
         Emits:
             cartridge_read(cartridge) on success
-            error_occurred(message) on failure
+            error_occurred(message) on failure (unless silent)
         """
         if not self.is_connected():
-            self.error_occurred.emit("Not connected to ESP32. Please connect first.")
+            if not silent:
+                self.error_occurred.emit("Not connected to ESP32. Please connect first.")
             return None
 
         try:
             self.log(f"Reading cartridge (machine type: {machine_type})...")
             self.progress_updated.emit("Reading EEPROM...", 25)
 
-            # Read EEPROM data
+            # Read EEPROM data. Retry once with a fresh bus reset + device
+            # search if the first attempt fails: rapid back-to-back reads can
+            # leave the bus, or the firmware's device-presence flag, unsettled
+            # (the firmware requires a SEARCH before each READ).
             data = self.bridge.onewire_read(512)
+            if data is None:
+                self.log("Read returned no data; resetting bus and re-searching...")
+                try:
+                    self.bridge.onewire_reset_bus()
+                    rescan = self.bridge.onewire_macro_search()
+                    if rescan:
+                        self.current_rom = rescan
+                except Exception as retry_err:
+                    self.log(f"Re-search before retry failed: {retry_err}")
+                data = self.bridge.onewire_read(512)
 
             if data is None:
                 raise Exception("Failed to read EEPROM")
+
+            # Keep the raw image so the hex viewer reflects the actual read
+            self.last_raw_data = bytes(data)
+            self.raw_data_read.emit(self.last_raw_data)
 
             self.progress_updated.emit("Decoding cartridge...", 50)
 
@@ -201,7 +258,8 @@ class CartridgeController(QObject):
 
         except Exception as e:
             error_msg = self._get_user_friendly_error(str(e))
-            self.error_occurred.emit(f"Failed to read cartridge: {error_msg}")
+            if not silent:
+                self.error_occurred.emit(f"Failed to read cartridge: {error_msg}")
             self.log(f"Read failed: {e}")
             return None
 
@@ -225,6 +283,7 @@ class CartridgeController(QObject):
             self.error_occurred.emit("Not connected to ESP32. Please connect first.")
             return False
 
+        self.last_write_verified = None
         try:
             self.log(f"Writing cartridge (machine type: {machine_type})...")
             self.progress_updated.emit("Encoding cartridge...", 10)
@@ -235,6 +294,9 @@ class CartridgeController(QObject):
 
             encoded = self.manager.encode(machine_number, eeprom_uid, cartridge)
             self.log(f"Encoded cartridge: {len(encoded)} bytes")
+
+            # Safety: back up whatever is currently on the cartridge first
+            self._backup_eeprom(rom_address)
 
             self.progress_updated.emit("Writing to EEPROM...", 30)
 
@@ -252,7 +314,8 @@ class CartridgeController(QObject):
             verify_data = self.bridge.onewire_read(len(encoded))
 
             if verify_data is None:
-                self.log("WARNING: Could not verify write")
+                self.last_write_verified = False
+                self.log("WARNING: Could not read back to verify write")
             elif bytes(verify_data) != bytes(encoded):
                 # Compare as bytes to handle bytearray vs bytes
                 self.log(f"Verification mismatch: read {len(verify_data)} bytes, expected {len(encoded)} bytes")
@@ -265,10 +328,13 @@ class CartridgeController(QObject):
 
                 raise Exception("Verification failed - data mismatch")
             else:
+                self.last_write_verified = True
                 self.log("Verification successful - data matches")
 
             self.current_cartridge = cartridge
             self.machine_type = machine_type
+            self.last_raw_data = bytes(encoded)
+            self.raw_data_read.emit(self.last_raw_data)
             self.cartridge_written.emit()
             self.log("Cartridge written successfully")
             self.progress_updated.emit("Write complete", 100)
@@ -279,6 +345,182 @@ class CartridgeController(QObject):
             self.error_occurred.emit(f"Failed to write cartridge: {error_msg}")
             self.log(f"Write failed: {e}")
             return False
+
+    def _backup_eeprom(self, rom_address):
+        """Read the current EEPROM and save it to a timestamped .bin file.
+
+        Best-effort: a blank or unreadable cartridge (e.g. when creating a brand
+        new one) is not an error, so failures are logged and the write proceeds.
+
+        Returns:
+            str: path of the backup file, or None if no backup was made.
+        """
+        if not self.backup_enabled:
+            return None
+
+        try:
+            data = self.bridge.onewire_read(512)
+            if not data:
+                self.log("Backup skipped: nothing readable on cartridge")
+                return None
+
+            os.makedirs(self.backup_dir, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            rom = (rom_address or "unknown").replace(" ", "")
+            path = os.path.join(self.backup_dir, f"backup_{rom}_{stamp}.bin")
+            with open(path, "wb") as f:
+                f.write(bytes(data))
+
+            self.log(f"Backed up current cartridge to {path}")
+            return path
+
+        except Exception as e:
+            self.log(f"Backup failed (continuing): {e}")
+            return None
+
+    def write_raw(self, data, rom_address=None):
+        """Write a raw EEPROM image (already-encoded bytes) to the cartridge.
+
+        Used by the Advanced tab's hex editor for byte-level operations. Backs
+        up first and verifies the read-back, like write_cartridge.
+
+        Returns:
+            bool: True if the write (and verification) succeeded.
+        """
+        if not self.is_connected():
+            self.error_occurred.emit("Not connected to ESP32. Please connect first.")
+            return False
+
+        data = bytes(data)
+        self.last_write_verified = None
+        try:
+            self.log(f"Writing raw image ({len(data)} bytes)...")
+
+            self._backup_eeprom(rom_address)
+
+            self.progress_updated.emit("Writing raw image...", 30)
+            if not self.bridge.onewire_write(data):
+                raise Exception("Failed to write EEPROM")
+
+            import time
+            time.sleep(0.5)
+
+            self.progress_updated.emit("Verifying write...", 80)
+            verify_data = self.bridge.onewire_read(len(data))
+            if verify_data is None:
+                self.last_write_verified = False
+                self.log("WARNING: Could not read back to verify raw write")
+            elif bytes(verify_data) != data:
+                raise Exception("Verification failed - data mismatch")
+            else:
+                self.last_write_verified = True
+                self.log("Raw write verified")
+
+            self.last_raw_data = data
+            self.raw_data_read.emit(data)
+            self.cartridge_written.emit()
+            self.progress_updated.emit("Write complete", 100)
+            return True
+
+        except Exception as e:
+            error_msg = self._get_user_friendly_error(str(e))
+            self.error_occurred.emit(f"Failed to write raw image: {error_msg}")
+            self.log(f"Raw write failed: {e}")
+            return False
+
+    # Byte ranges the printer actually validates (encrypted content + the
+    # checksums over it + the key). Anything outside these is ignored by the
+    # printer, so a difference there cannot make a cartridge be rejected.
+    _COVERED_RANGES = ((0x00, 0x42), (0x46, 0x52), (0x58, 0x64))
+
+    def _covered_byte(self, n):
+        """Return a bool list marking checksum/encryption-covered offsets."""
+        covered = [False] * n
+        for lo, hi in self._COVERED_RANGES:
+            for i in range(lo, min(hi, n)):
+                covered[i] = True
+        return covered
+
+    def verify_encode_roundtrip(self, rom_address, machine_type):
+        """Non-destructive self-test. NEVER writes to the cartridge.
+
+        Reads the genuine cartridge, decodes it (which validates every checksum
+        the printer checks), re-encodes the decoded data unchanged, and compares
+        the result against the original. If the re-encode is bit-identical — or
+        decodes to identical data with differences only outside the validated
+        regions — then this tool's encoder reproduces printer-valid data for
+        this exact cartridge, and a real write can be trusted.
+
+        Returns:
+            dict with keys: verdict ('identical' | 'equivalent' | 'fail'),
+            messages (list[str]), diffs (list[int] offsets), cartridge.
+        """
+        report = {"verdict": "fail", "messages": [], "diffs": [], "cartridge": None}
+
+        def msg(s):
+            report["messages"].append(s)
+            self.log(s)
+
+        if not self.is_connected():
+            msg("Not connected to ESP32.")
+            return report
+
+        try:
+            msg("Self-test: reading cartridge (NO write will be performed)...")
+            raw = self.bridge.onewire_read(512)
+            if raw is None:
+                msg("✗ Could not read the cartridge.")
+                return report
+            raw = bytes(raw)
+            self.last_raw_data = raw
+            self.raw_data_read.emit(raw)
+
+            machine_number = machine.get_number_from_type(machine_type)
+            eeprom_uid = bytes.fromhex(rom_address)
+
+            # Decode validates all checksums; raises if not a genuine cartridge
+            # for this machine type.
+            cartridge = self.manager.decode(machine_number, eeprom_uid, bytearray(raw))
+            report["cartridge"] = cartridge
+            msg(f"✓ Decoded genuine cartridge — all checksums valid (type: {machine_type}).")
+
+            # Re-encode the decoded data unchanged and re-decode to re-validate.
+            reencoded = bytes(self.manager.encode(machine_number, eeprom_uid, cartridge))
+            cartridge2 = self.manager.decode(machine_number, eeprom_uid, bytearray(reencoded))
+            fields_match = (cartridge == cartridge2)
+
+            n = len(reencoded)
+            original = raw[:n]
+            diffs = [i for i in range(n) if original[i] != reencoded[i]]
+            report["diffs"] = diffs
+
+            if original == reencoded:
+                report["verdict"] = "identical"
+                msg(f"✓ Re-encoded image is BIT-IDENTICAL to the genuine cartridge ({n} bytes).")
+                msg("→ Writing this data back is guaranteed safe; the printer cannot tell it apart.")
+            elif fields_match:
+                covered = self._covered_byte(n)
+                covered_diffs = [i for i in diffs if covered[i]]
+                msg("✓ Re-encoded image decodes to IDENTICAL data and passes all checksums.")
+                msg(f"  {len(diffs)} byte(s) differ at: " + ", ".join(hex(i) for i in diffs))
+                if covered_diffs:
+                    report["verdict"] = "fail"
+                    msg("✗ Differences fall INSIDE validated/encrypted regions: "
+                        + ", ".join(hex(i) for i in covered_diffs) + " — DO NOT WRITE.")
+                else:
+                    report["verdict"] = "equivalent"
+                    msg("  All differences are OUTSIDE the encrypted/checksummed regions, "
+                        "which the printer does not validate. → Safe to write.")
+            else:
+                report["verdict"] = "fail"
+                msg("✗ Re-encoded cartridge does NOT match the original data. DO NOT WRITE.")
+
+            return report
+
+        except Exception as e:
+            msg(f"✗ Decode failed: {e}")
+            msg("  Usually means the wrong machine type, or not a genuine cartridge.")
+            return report
 
     def save_to_file(self, cartridge, filepath, rom_address, machine_type):
         """

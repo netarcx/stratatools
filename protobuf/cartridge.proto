@@ -15,9 +15,9 @@ message Cartridge {
   google.protobuf.Timestamp manufacturing_date = 4;
   // Last use date
   google.protobuf.Timestamp last_use_date = 5;
-  // Initial material quantity, in cubic feet
+  // Initial material quantity, in cubic inches
   float initial_material_quantity = 6;
-  // Remaining material quantity, in cubic feet
+  // Remaining material quantity, in cubic inches
   float current_material_quantity = 7;
   // Key used to encrypt / decrypt
   bytes key_fragment = 8;

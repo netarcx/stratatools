@@ -111,7 +111,7 @@ class StratatoolsConsoleApp():
         eeprom = m.encode(machine_number, bytes.fromhex(args.eeprom_uid), cartridge)
 
         if args.use_ascii:
-            eeprom = self._make_ascii(cartridge, eeprom, args.eeprom_uid, args.machine_number)
+            eeprom = self._make_ascii(cartridge, eeprom, args.eeprom_uid, args.machine_type)
 
         if args.diag_format:
             eeprom = self.diag_formatter.to_destination(eeprom)
@@ -144,7 +144,7 @@ class StratatoolsConsoleApp():
         cartridge.last_use_date.FromDatetime(args.use_date)
         cartridge.initial_material_quantity = args.initial_material_quantity
         cartridge.current_material_quantity = args.current_material_quantity
-        cartridge.key_fragment = args.key_fragment
+        cartridge.key_fragment = args.key_fragment.encode("ascii")
         cartridge.version = args.version
         cartridge.signature = args.signature
 
@@ -165,7 +165,7 @@ class StratatoolsConsoleApp():
 
         # Prefix each line with comment `#`
         s = ""
-        for l in lines:
+        for l in lines.splitlines():
             s += "# " + l + "\n"
 
         s += "# eeprom uid: " + eeprom_uid + "\n"
@@ -173,7 +173,7 @@ class StratatoolsConsoleApp():
         s += "#\n"
 
         # turn to binary into 32 chars wide ascii lines
-        eeprom_ascii = binascii.b2a_hex(eeprom_bin)
+        eeprom_ascii = binascii.b2a_hex(eeprom_bin).decode('ascii')
         n = len(eeprom_ascii)
         for i in range(0, n, 32):
             nn = 32

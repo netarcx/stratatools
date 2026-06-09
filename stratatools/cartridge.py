@@ -3,7 +3,7 @@ import random
 
 def get_random_serialnumber():
     random.seed()
-    return float(random.randint(1, 2**8))
+    return float(random.randint(1, 999999))
 
 # Refill the provided cartridge
 def refill(cartridge):

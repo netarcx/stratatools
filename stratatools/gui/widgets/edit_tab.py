@@ -10,10 +10,11 @@ from PyQt5.QtWidgets import (
     QPushButton, QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox,
     QDateTimeEdit, QFileDialog, QMessageBox, QFormLayout
 )
-from PyQt5.QtCore import QDateTime
+from PyQt5.QtCore import QDateTime, QDate, QTime
 
-from stratatools import material, machine, cartridge_pb2
+from stratatools import material, machine, cartridge_pb2, cartridge as cartridge_lib
 from stratatools.gui.models.cartridge_model import CartridgeModel
+from stratatools.gui.controllers.worker import run_async
 
 
 class EditTab(QWidget):
@@ -34,10 +35,17 @@ class EditTab(QWidget):
         fields_group = QGroupBox("Cartridge Parameters")
         form = QFormLayout()
 
+        serial_row = QHBoxLayout()
         self.serial_spin = QDoubleSpinBox()
         self.serial_spin.setRange(1, 999999)
+        self.serial_spin.setDecimals(0)
         self.serial_spin.setValue(1000)
-        form.addRow("Serial Number:", self.serial_spin)
+        serial_row.addWidget(self.serial_spin)
+        self.gen_serial_btn = QPushButton("Generate")
+        self.gen_serial_btn.clicked.connect(self.generate_serial)
+        serial_row.addWidget(self.gen_serial_btn)
+        serial_row.addStretch()
+        form.addRow("Serial Number:", serial_row)
 
         self.material_combo = QComboBox()
         self.material_combo.setEditable(True)
@@ -86,6 +94,17 @@ class EditTab(QWidget):
 
         fields_group.setLayout(form)
         layout.addWidget(fields_group)
+
+        # Live validation warning (hidden when everything is valid)
+        self.warning_label = QLabel("")
+        self.warning_label.setStyleSheet("color: #c0392b; font-weight: bold;")
+        self.warning_label.setWordWrap(True)
+        self.warning_label.setVisible(False)
+        layout.addWidget(self.warning_label)
+
+        # Re-validate whenever quantities change
+        self.initial_spin.valueChanged.connect(self.update_validation)
+        self.current_spin.valueChanged.connect(self.update_validation)
 
         # Actions Group
         actions_group = QGroupBox("Actions")
@@ -138,11 +157,46 @@ class EditTab(QWidget):
         self.controller.cartridge_read.connect(self.load_cartridge)
         self.controller.device_found.connect(self.set_rom_address)
 
+    def generate_serial(self):
+        """Fill the serial field with a random serial number."""
+        self.serial_spin.setValue(cartridge_lib.get_random_serialnumber())
+
+    def update_validation(self):
+        """Show a live warning if current quantity exceeds initial."""
+        if self.current_spin.value() > self.initial_spin.value():
+            self.warning_label.setText(
+                "⚠ Current quantity exceeds initial quantity.")
+            self.warning_label.setVisible(True)
+        else:
+            self.warning_label.setVisible(False)
+
+    def validate_cartridge(self, c):
+        """Validate a built cartridge; show all errors and return False if any."""
+        errors = CartridgeModel(c).validate()
+        if errors:
+            QMessageBox.warning(
+                self, "Invalid cartridge",
+                "Please fix the following before writing:\n\n - "
+                + "\n - ".join(errors))
+            return False
+        return True
+
     def get_cartridge_from_fields(self):
-        """Build cartridge from UI fields"""
+        """Build cartridge from UI fields.
+
+        Returns None (after showing a warning) if the entered material name is
+        not known, since the encoder would otherwise raise a KeyError.
+        """
+        mat_name = self.material_combo.currentText()
+        try:
+            material.get_id_from_name(mat_name)
+        except KeyError:
+            QMessageBox.warning(self, "Error", f"Unknown material: {mat_name}")
+            return None
+
         c = cartridge_pb2.Cartridge()
         c.serial_number = self.serial_spin.value()
-        c.material_name = self.material_combo.currentText()
+        c.material_name = mat_name
         c.manufacturing_lot = self.lot_edit.text()
 
         mfg_dt = self.mfg_date.dateTime().toPyDateTime()
@@ -156,9 +210,10 @@ class EditTab(QWidget):
         c.version = self.version_spin.value()
         c.signature = self.signature_edit.text()
 
-        # Generate random key fragment
+        # Generate random key fragment (stored as a 16-char ASCII hex string,
+        # the representation the manager/encoder expects)
         import os
-        c.key_fragment = os.urandom(8)
+        c.key_fragment = os.urandom(8).hex().encode("ascii")
 
         return c
 
@@ -176,11 +231,15 @@ class EditTab(QWidget):
 
         if cartridge.HasField("manufacturing_date"):
             mfg_dt = cartridge.manufacturing_date.ToDatetime()
-            self.mfg_date.setDateTime(QDateTime(mfg_dt))
+            self.mfg_date.setDateTime(QDateTime(
+                QDate(mfg_dt.year, mfg_dt.month, mfg_dt.day),
+                QTime(mfg_dt.hour, mfg_dt.minute, mfg_dt.second)))
 
         if cartridge.HasField("last_use_date"):
             use_dt = cartridge.last_use_date.ToDatetime()
-            self.use_date.setDateTime(QDateTime(use_dt))
+            self.use_date.setDateTime(QDateTime(
+                QDate(use_dt.year, use_dt.month, use_dt.day),
+                QTime(use_dt.hour, use_dt.minute, use_dt.second)))
 
         self.initial_spin.setValue(cartridge.initial_material_quantity)
         self.current_spin.setValue(cartridge.current_material_quantity)
@@ -231,6 +290,8 @@ class EditTab(QWidget):
                 return
 
             cartridge = self.get_cartridge_from_fields()
+            if cartridge is None or not self.validate_cartridge(cartridge):
+                return
             if self.controller.save_to_file(cartridge, filepath, rom, machine_type):
                 QMessageBox.information(self, "Success", f"Cartridge saved to {filepath}")
 
@@ -253,7 +314,25 @@ class EditTab(QWidget):
 
         if reply == QMessageBox.Yes:
             cartridge = self.get_cartridge_from_fields()
+            if cartridge is None or not self.validate_cartridge(cartridge):
+                return
             machine_type = self.machine_combo.currentText()
 
-            if self.controller.write_cartridge(cartridge, rom, machine_type):
-                QMessageBox.information(self, "Success", "Cartridge written successfully")
+            run_async(
+                self, self.controller.write_cartridge, cartridge, rom, machine_type,
+                busy=[self.write_btn, self.refill_btn, self.save_btn, self.load_btn],
+                on_result=self._on_write_done)
+
+    def _on_write_done(self, ok):
+        """Report the write result, distinguishing verified vs unverified."""
+        if not ok:
+            return
+        if self.controller.last_write_verified:
+            QMessageBox.information(
+                self, "Success",
+                "Cartridge written and verified (read-back matches).")
+        else:
+            QMessageBox.warning(
+                self, "Written but NOT verified",
+                "The write completed, but the data could not be read back to "
+                "confirm it. Re-read the cartridge to check before relying on it.")

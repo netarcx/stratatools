@@ -2,6 +2,7 @@
 # See the LICENSE file
 #
 
+import binascii
 import datetime
 import struct
 import time
@@ -90,8 +91,8 @@ class Manager:
         struct.pack_into("<d", eeprom, 0x38, cartridge.initial_material_quantity)
         # plaintext checksum
         struct.pack_into("<H", eeprom, 0x40, self.checksum.checksum(eeprom[0x00:0x40]))
-        # key
-        struct.pack_into("<8s", eeprom, 0x48, cartridge.key_fragment)
+        # key (key_fragment is an ASCII hex string; store the decoded 8 bytes)
+        struct.pack_into("<8s", eeprom, 0x48, binascii.unhexlify(cartridge.key_fragment))
         # key checksum
         struct.pack_into("<H", eeprom, 0x50, self.checksum.checksum(eeprom[0x48:0x50]))
         # current material quantity
@@ -153,8 +154,8 @@ class Manager:
         initial_material_quantity = struct.unpack_from("<d", cartridge_packed, 0x38)[0]
         # Version
         version = struct.unpack_from("<H", cartridge_packed, 0x24)[0]
-        # Key fragment
-        key_fragment = struct.unpack_from("<8s", cartridge_packed, 0x48)[0]
+        # Key fragment (stored as 8 raw bytes; expose as the ASCII hex string)
+        key_fragment = binascii.hexlify(struct.unpack_from("<8s", cartridge_packed, 0x48)[0])
         # Current material quantity
         current_material_quantity = struct.unpack_from("<d", cartridge_packed, 0x58)[0]
         # Signature

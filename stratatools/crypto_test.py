@@ -9,15 +9,15 @@ class TestCrypto(unittest.TestCase):
 
         desx = Desx_Crypto()
 
-        ciphertext = desx.encrypt(DESX_KEY, "this is a test..")
+        ciphertext = desx.encrypt(DESX_KEY, b"this is a test..")
 
         assert expected_ciphertext == ciphertext
 
     def test_desx_encrypt_decrypt(self):
-        expected_plaintext = "this is a test.."
+        expected_plaintext = b"this is a test.."
 
         desx = Desx_Crypto()
 
         plaintext = desx.decrypt(DESX_KEY, desx.encrypt(DESX_KEY, expected_plaintext))
 
-        assert expected_plaintext == plaintext
+        assert expected_plaintext == bytes(plaintext)

@@ -27,7 +27,7 @@ def get_number_from_type(type):
 
 def get_type_from_number(number):
     if len(number_to_type) == 0:
-        for key, value in enumerate(type_to_number):
-            number_to_type[value] = key
+        for type_name, number_hex in type_to_number.items():
+            number_to_type[number_hex] = type_name
 
-    return number_to_type[binascii.hexlify(number)]
+    return number_to_type[binascii.hexlify(number).decode().upper()]

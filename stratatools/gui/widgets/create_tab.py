@@ -4,15 +4,18 @@ Create Tab Widget - Simplified Version
 Create new cartridge from scratch with simple form.
 """
 
+import json
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QPushButton, QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox,
-    QMessageBox, QFormLayout
+    QMessageBox, QFormLayout, QInputDialog
 )
-from PyQt5.QtCore import QDateTime
+from PyQt5.QtCore import QDateTime, QSettings
 
 from stratatools import material, machine, cartridge_pb2, cartridge
+from stratatools.gui.models.cartridge_model import CartridgeModel
+from stratatools.gui.controllers.worker import run_async
 
 
 class CreateTab(QWidget):
@@ -21,7 +24,9 @@ class CreateTab(QWidget):
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
+        self.settings = QSettings()
         self.setup_ui()
+        self.reload_presets()
 
     def setup_ui(self):
         """Setup the user interface"""
@@ -41,6 +46,7 @@ class CreateTab(QWidget):
         serial_layout = QHBoxLayout()
         self.serial_spin = QDoubleSpinBox()
         self.serial_spin.setRange(1, 999999)
+        self.serial_spin.setDecimals(0)
         self.serial_spin.setValue(1000)
         serial_layout.addWidget(self.serial_spin)
 
@@ -126,6 +132,30 @@ class CreateTab(QWidget):
         target_group.setLayout(target_form)
         layout.addWidget(target_group)
 
+        # Presets Group
+        preset_group = QGroupBox("Presets")
+        preset_layout = QHBoxLayout()
+        preset_layout.addWidget(QLabel("Preset:"))
+        self.preset_combo = QComboBox()
+        self.preset_combo.setMinimumWidth(180)
+        preset_layout.addWidget(self.preset_combo)
+
+        self.load_preset_btn = QPushButton("Load")
+        self.load_preset_btn.clicked.connect(self.load_preset)
+        preset_layout.addWidget(self.load_preset_btn)
+
+        self.save_preset_btn = QPushButton("Save As...")
+        self.save_preset_btn.clicked.connect(self.save_preset)
+        preset_layout.addWidget(self.save_preset_btn)
+
+        self.delete_preset_btn = QPushButton("Delete")
+        self.delete_preset_btn.clicked.connect(self.delete_preset)
+        preset_layout.addWidget(self.delete_preset_btn)
+
+        preset_layout.addStretch()
+        preset_group.setLayout(preset_layout)
+        layout.addWidget(preset_group)
+
         # Actions
         actions_layout = QHBoxLayout()
         actions_layout.addStretch()
@@ -144,6 +174,75 @@ class CreateTab(QWidget):
         """Generate random serial number"""
         serial = cartridge.get_random_serialnumber()
         self.serial_spin.setValue(serial)
+
+    # ----- Presets -------------------------------------------------------
+    def _load_presets_dict(self):
+        raw = self.settings.value("create/presets", "{}")
+        try:
+            return json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            return {}
+
+    def reload_presets(self):
+        """Refresh the preset dropdown from saved settings."""
+        self.preset_combo.clear()
+        presets = self._load_presets_dict()
+        if not presets:
+            self.preset_combo.addItem("(no presets)")
+            self.preset_combo.setEnabled(False)
+            self.load_preset_btn.setEnabled(False)
+            self.delete_preset_btn.setEnabled(False)
+        else:
+            self.preset_combo.setEnabled(True)
+            self.load_preset_btn.setEnabled(True)
+            self.delete_preset_btn.setEnabled(True)
+            for name in sorted(presets):
+                self.preset_combo.addItem(name)
+
+    def save_preset(self):
+        """Save the current form values as a named preset."""
+        name, ok = QInputDialog.getText(self, "Save Preset", "Preset name:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        presets = self._load_presets_dict()
+        presets[name] = {
+            "material": self.material_combo.currentText(),
+            "initial": self.initial_spin.value(),
+            "current": self.current_spin.value(),
+            "version": self.version_spin.value(),
+            "signature": self.signature_edit.text(),
+            "machine_type": self.machine_combo.currentText(),
+            "lot": self.lot_edit.text(),
+        }
+        self.settings.setValue("create/presets", json.dumps(presets))
+        self.reload_presets()
+        self.preset_combo.setCurrentText(name)
+
+    def load_preset(self):
+        """Load the selected preset into the form."""
+        presets = self._load_presets_dict()
+        data = presets.get(self.preset_combo.currentText())
+        if not data:
+            return
+        self.material_combo.setCurrentText(data.get("material", ""))
+        self.initial_spin.setValue(data.get("initial", 0.0))
+        self.current_spin.setValue(data.get("current", 0.0))
+        self.version_spin.setValue(int(data.get("version", 1)))
+        self.signature_edit.setText(data.get("signature", "STRATASYS"))
+        self.lot_edit.setText(data.get("lot", ""))
+        mt = data.get("machine_type")
+        if mt:
+            self.machine_combo.setCurrentText(mt)
+
+    def delete_preset(self):
+        """Delete the selected preset."""
+        name = self.preset_combo.currentText()
+        presets = self._load_presets_dict()
+        if name in presets:
+            del presets[name]
+            self.settings.setValue("create/presets", json.dumps(presets))
+            self.reload_presets()
 
     def set_rom_address(self, rom):
         """Set ROM address from device search"""
@@ -173,6 +272,12 @@ class CreateTab(QWidget):
             mat_name = mat_text.split(" (")[0]
         else:
             mat_name = mat_text
+
+        try:
+            material.get_id_from_name(mat_name)
+        except KeyError:
+            QMessageBox.warning(self, "Error", f"Unknown material: {mat_name}")
+            return
         c.material_name = mat_name
 
         c.manufacturing_lot = self.lot_edit.text()
@@ -186,9 +291,19 @@ class CreateTab(QWidget):
         c.version = self.version_spin.value()
         c.signature = self.signature_edit.text()
 
-        # Generate random key fragment
+        # Generate random key fragment (stored as a 16-char ASCII hex string,
+        # the representation the manager/encoder expects)
         import os
-        c.key_fragment = os.urandom(8)
+        c.key_fragment = os.urandom(8).hex().encode("ascii")
+
+        # Validate before doing anything destructive
+        errors = CartridgeModel(c).validate()
+        if errors:
+            QMessageBox.warning(
+                self, "Invalid cartridge",
+                "Please fix the following before writing:\n\n - "
+                + "\n - ".join(errors))
+            return
 
         # Confirm
         reply = QMessageBox.question(
@@ -204,8 +319,21 @@ class CreateTab(QWidget):
         if reply == QMessageBox.Yes:
             machine_type = self.machine_combo.currentText()
 
-            if self.controller.write_cartridge(c, rom, machine_type):
-                QMessageBox.information(
-                    self, "Success",
-                    "New cartridge created and written successfully!"
-                )
+            run_async(
+                self, self.controller.write_cartridge, c, rom, machine_type,
+                busy=[self.create_btn],
+                on_result=self._on_write_done)
+
+    def _on_write_done(self, ok):
+        """Report the write result, distinguishing verified vs unverified."""
+        if not ok:
+            return
+        if self.controller.last_write_verified:
+            QMessageBox.information(
+                self, "Success",
+                "New cartridge created, written and verified (read-back matches).")
+        else:
+            QMessageBox.warning(
+                self, "Written but NOT verified",
+                "The cartridge was written, but the data could not be read back "
+                "to confirm it. Re-read the cartridge to check before relying on it.")

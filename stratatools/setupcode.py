@@ -423,7 +423,7 @@ class SetupcodeEncoder():
             shift_base = (shift_base - 0x20) & 0xff
             error = error + 1
             if error > 5 :
-                raise "error > 5 :("
+                raise Exception("error > 5 :(")
 
         for i in [0, 1, 2, 3, 5, 6, 7, 8, 10, 11, 12, 13, 15, 16, 18]:
             position = self._dict_get_position(setup_code[i])

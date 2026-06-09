@@ -62,63 +62,64 @@ class BusPirate:
         self.serial = serial.Serial(port, baudrate, timeout=timeout)
 
     def __del__(self):
-        self.serial.close()
+        if getattr(self, "serial", None):
+            self.serial.close()
 
     def initialize(self):
         # Set bus pirate in 1-wire mode
-        self.serial.write("m\n")
+        self.serial.write(b"m\n")
         self._read_until_prompt()
-        self.serial.write("2\n")
+        self.serial.write(b"2\n")
         self._read_until_prompt()
         # Cycle PSU (cycle one-wire power)
-        self.serial.write("w\n")
+        self.serial.write(b"w\n")
         self._read_until_prompt()
-        self.serial.write("W\n")
+        self.serial.write(b"W\n")
         self._read_until_prompt()
         # Enable pull-up
-        self.serial.write("P\n")
+        self.serial.write(b"P\n")
         self._read_until_prompt()
 
     def _read_until_prompt(self):
-        line = self.serial.readline()
+        line = self.serial.readline().decode("ascii", errors="ignore")
         while line != "":
             #print line,
-            line = self.serial.readline()
+            line = self.serial.readline().decode("ascii", errors="ignore")
 
     def onewire_macro_search(self):
         rom_sequence = None
         p = re.compile(r".*((?:0x[a-fA-F0-9 ]{2,3}){8})", re.IGNORECASE)
 
-        self.serial.write("(0xF0)\n")
+        self.serial.write(b"(0xF0)\n")
 
-        line = self.serial.readline()
+        line = self.serial.readline().decode("ascii", errors="ignore")
         while line != "":
             m = re.match(p, line)
             if m:
                 rom_sequence = m.group(1)
-            line = self.serial.readline()
+            line = self.serial.readline().decode("ascii", errors="ignore")
 
         return rom_sequence
 
     def onewire_reset_bus(self):
-        self.serial.write("{\n")
+        self.serial.write(b"{\n")
         self._read_until_prompt()
 
     def onewire_write(self, data):
-        self.serial.write(data + "\n")
+        self.serial.write((data + "\n").encode("ascii"))
         self._read_until_prompt()
 
     def onewire_read(self, length):
         data = None
         p = re.compile(r"READ: ((?:0x[a-fA-F0-9 ]{2,3}){3,})", re.IGNORECASE)
-        self.serial.write("r:%d\n" % length)
+        self.serial.write(("r:%d\n" % length).encode("ascii"))
 
-        line = self.serial.readline()
+        line = self.serial.readline().decode("ascii", errors="ignore")
         while line != "":
             m = re.match(p, line)
             if m:
                 data = m.group(1)
-            line = self.serial.readline()
+            line = self.serial.readline().decode("ascii", errors="ignore")
 
         return data
 
@@ -132,10 +133,11 @@ def main():
     bp.onewire_reset_bus()
 
     rom_sequence = bp.onewire_macro_search()
-    print("Device found: " + rom_sequence)
 
     if rom_sequence is None:
         raise(Exception("unable to find a device on this 1-wire bus"))
+
+    print("Device found: " + rom_sequence)
 
     print("Reading...")
     packet = ds2433_read_memory("0x00", "0x00")
@@ -143,7 +145,7 @@ def main():
     memory = bp.onewire_read(512)
     print("Done!")
 
-    f = open(sys.argv[2], "w")
+    f = open(sys.argv[2], "wb")
     f.write(hex2bin(memory))
     f.close()
 

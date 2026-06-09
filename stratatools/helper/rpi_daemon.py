@@ -17,19 +17,19 @@ cartridge_template = None
 
 def read_bytes(path):
     data = None
-    with open(path, "r") as f:
+    with open(path, "rb") as f:
         data = bytearray(f.read())
     return data
 
 def write_bytes(path, data):
-    with open(path, "w", buffering=0) as f:
+    with open(path, "wb", buffering=0) as f:
         f.write(data)
 
 def on_new_cartridge(device):
     eeprom_path = "/sys/" + device.device_path + "/eeprom"
     eeprom_uid = read_bytes("/sys/" + device.device_path + "/id")
 
-    print("New device detected <" + binascii.hexlify(eeprom_uid) + ">.")
+    print("New device detected <" + binascii.hexlify(eeprom_uid).decode() + ">.")
     try:
         c = cartridge_template
 
@@ -49,13 +49,11 @@ def on_new_cartridge(device):
         traceback.print_exc()
 
 def read_cartridge_template(path):
-    catridge = None
-
     with open(path, "r") as f:
-        cartridge = cartridge_pb2.Cartridge()
-        Merge(f.read(), cartridge)
+        template = cartridge_pb2.Cartridge()
+        Merge(f.read(), template)
 
-    return cartridge
+    return template
 
 def main():
     global cartridge_manager

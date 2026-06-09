@@ -355,6 +355,8 @@ def run_serial_daemon(port):
     """Run as serial daemon on specified port"""
     print(f"Starting 1-Wire Bridge on {port}...")
 
+    ow = None
+    ser = None
     try:
         ow = OneWireHandler(ONEWIRE_PIN)
         protocol = SerialProtocol(ow)
@@ -371,18 +373,24 @@ def run_serial_daemon(port):
                     response = protocol.process_command(line)
                     ser.write((response + '\n').encode('ascii'))
                     ser.flush()
+            else:
+                time.sleep(0.01)
 
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
-        ow.close()
-        ser.close()
+        if ow:
+            ow.close()
+        if ser:
+            ser.close()
 
 
 def run_tcp_server(port):
     """Run as TCP server (for testing)"""
     print(f"Starting 1-Wire Bridge TCP server on port {port}...")
 
+    ow = None
+    server = None
     try:
         ow = OneWireHandler(ONEWIRE_PIN)
         protocol = SerialProtocol(ow)
@@ -420,8 +428,10 @@ def run_tcp_server(port):
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
-        ow.close()
-        server.close()
+        if ow:
+            ow.close()
+        if server:
+            server.close()
 
 
 if __name__ == "__main__":

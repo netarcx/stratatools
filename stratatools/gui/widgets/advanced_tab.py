@@ -6,10 +6,12 @@ Hex viewer, debug console, and raw operations.
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-    QPushButton, QTextEdit, QFileDialog, QMessageBox
+    QPushButton, QTextEdit, QFileDialog, QMessageBox, QInputDialog
 )
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt
+
+from stratatools.gui.controllers.worker import run_async
 
 
 class AdvancedTab(QWidget):
@@ -50,6 +52,16 @@ class AdvancedTab(QWidget):
         self.copy_btn.clicked.connect(self.copy_hex)
         hex_btn_layout.addWidget(self.copy_btn)
 
+        self.edit_bytes_btn = QPushButton("Edit Bytes...")
+        self.edit_bytes_btn.setToolTip("Edit the raw bytes as a continuous hex string")
+        self.edit_bytes_btn.clicked.connect(self.edit_bytes)
+        hex_btn_layout.addWidget(self.edit_bytes_btn)
+
+        self.write_image_btn = QPushButton("Write Image to EEPROM...")
+        self.write_image_btn.setToolTip("Write the displayed raw bytes directly to the cartridge")
+        self.write_image_btn.clicked.connect(self.write_image)
+        hex_btn_layout.addWidget(self.write_image_btn)
+
         hex_btn_layout.addStretch()
 
         hex_layout.addLayout(hex_btn_layout)
@@ -77,6 +89,10 @@ class AdvancedTab(QWidget):
         self.test_read_btn.clicked.connect(self.test_read)
         debug_btn_layout.addWidget(self.test_read_btn)
 
+        self.save_log_btn = QPushButton("Save Log...")
+        self.save_log_btn.clicked.connect(self.save_log)
+        debug_btn_layout.addWidget(self.save_log_btn)
+
         self.clear_log_btn = QPushButton("Clear Log")
         self.clear_log_btn.clicked.connect(self.clear_log)
         debug_btn_layout.addWidget(self.clear_log_btn)
@@ -90,13 +106,13 @@ class AdvancedTab(QWidget):
     def connect_signals(self):
         """Connect controller signals"""
         self.controller.log_message.connect(self.append_log)
-        self.controller.cartridge_read.connect(self.on_cartridge_read)
+        self.controller.raw_data_read.connect(self.on_raw_data)
 
-    def on_cartridge_read(self, cartridge):
-        """Store raw data when cartridge is read"""
-        # We can't easily get raw data from cartridge read in current architecture
-        # So just show a placeholder
-        self.append_log("Cartridge read - use Import Raw .bin to view hex data")
+    def on_raw_data(self, data):
+        """Display the raw EEPROM image from an actual read/write."""
+        self.last_raw_data = bytes(data)
+        self.hex_text.setText(self.format_hex_dump(self.last_raw_data))
+        self.append_log(f"Hex view updated ({len(self.last_raw_data)} bytes)")
 
     def format_hex_dump(self, data):
         """Format binary data as hex dump"""
@@ -170,57 +186,130 @@ class AdvancedTab(QWidget):
             QApplication.clipboard().setText(hex_text)
             self.append_log("Hex data copied to clipboard")
 
+    def edit_bytes(self):
+        """Edit the raw bytes as a continuous hex string."""
+        current = (self.last_raw_data or b"").hex()
+        # Group into space-separated byte pairs for readability
+        spaced = " ".join(current[i:i + 2] for i in range(0, len(current), 2))
+        text, ok = QInputDialog.getMultiLineText(
+            self, "Edit Bytes",
+            "Hex bytes (whitespace/':' ignored):", spaced)
+        if not ok:
+            return
+        cleaned = text.replace(" ", "").replace(":", "").replace("\n", "").replace("\r", "")
+        try:
+            data = bytes.fromhex(cleaned)
+        except ValueError as e:
+            QMessageBox.critical(self, "Invalid hex", f"Could not parse hex: {e}")
+            return
+        self.last_raw_data = data
+        self.hex_text.setText(self.format_hex_dump(data))
+        self.append_log(f"Edited buffer is now {len(data)} bytes")
+
+    def write_image(self):
+        """Write the displayed raw bytes directly to the cartridge."""
+        if not self.controller.is_connected():
+            QMessageBox.warning(self, "Error", "Not connected to ESP32")
+            return
+        if not self.last_raw_data:
+            QMessageBox.warning(self, "Error", "No data to write. Import or read first.")
+            return
+
+        reply = QMessageBox.question(
+            self, "Confirm Raw Write",
+            f"Write {len(self.last_raw_data)} raw bytes directly to the cartridge?\n\n"
+            "This bypasses encoding and overwrites the EEPROM. "
+            "The current contents are backed up first.",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        run_async(
+            self, self.controller.write_raw,
+            self.last_raw_data, self.controller.current_rom,
+            busy=[self.write_image_btn, self.import_btn, self.edit_bytes_btn],
+            on_result=lambda ok: self.append_log(
+                "Raw image written successfully" if ok else "Raw write failed"))
+
+    def save_log(self):
+        """Save the debug log to a text file."""
+        text = self.log_text.toPlainText()
+        if not text:
+            QMessageBox.warning(self, "Error", "Log is empty")
+            return
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Save Log", "stratatools_log.txt", "Text Files (*.txt);;All Files (*)")
+        if filepath:
+            try:
+                with open(filepath, "w") as f:
+                    f.write(text)
+                self.append_log(f"Log saved to {filepath}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save log: {e}")
+
     def send_debug(self):
-        """Send DEBUG command to ESP32"""
+        """Send DEBUG command to ESP32 (off the GUI thread)."""
         if not self.controller.is_connected():
             QMessageBox.warning(self, "Error", "Not connected to ESP32")
             return
 
         self.append_log("Sending DEBUG command...")
-        output = self.controller.send_debug_command()
+        run_async(self, self.controller.send_debug_command,
+                  busy=[self.debug_cmd_btn, self.test_read_btn],
+                  on_result=self._on_debug_output)
 
+    def _on_debug_output(self, output):
         if output:
             self.append_log("--- DEBUG OUTPUT ---")
             self.append_log(output)
             self.append_log("--- END DEBUG OUTPUT ---")
 
     def test_read(self):
-        """Test reading EEPROM to diagnose issues"""
+        """Test reading EEPROM to diagnose issues (off the GUI thread)."""
         if not self.controller.is_connected():
             QMessageBox.warning(self, "Error", "Not connected to ESP32")
             return
 
         self.append_log("\n=== EEPROM Read Test ===")
+        run_async(self, self._test_read_worker,
+                  busy=[self.debug_cmd_btn, self.test_read_btn],
+                  on_result=self._on_test_read_done)
 
-        # Search for device first
-        self.append_log("Searching for device...")
+    def _test_read_worker(self):
+        """Worker: search + read 32 bytes, capturing the bridge's stdout."""
+        import sys
+        from io import StringIO
+
         rom = self.controller.bridge.onewire_macro_search()
         if not rom:
-            self.append_log("✗ No device found")
-            return
+            return {"rom": None, "data": None, "captured": ""}
 
-        self.append_log(f"✓ Device found: {rom}")
-
-        # Try reading small amount first
-        self.append_log("\nTrying to read 32 bytes...")
-        import sys
         old_stdout = sys.stdout
-
-        # Capture print output
-        from io import StringIO
         captured = StringIO()
         sys.stdout = captured
-
         try:
             data = self.controller.bridge.onewire_read(32)
         finally:
             sys.stdout = old_stdout
 
-        # Show captured output
-        captured_text = captured.getvalue()
-        if captured_text:
+        return {"rom": rom, "data": data, "captured": captured.getvalue()}
+
+    def _on_test_read_done(self, result):
+        """GUI thread: report the test-read outcome."""
+        rom = result.get("rom")
+        if not rom:
+            self.append_log("✗ No device found")
+            self.append_log("=== End Test ===\n")
+            return
+
+        self.append_log(f"✓ Device found: {rom}")
+        self.append_log("\nTrying to read 32 bytes...")
+
+        captured_text = result.get("captured") or ""
+        if captured_text.strip():
             self.append_log(captured_text.strip())
 
+        data = result.get("data")
         if data:
             self.append_log(f"✓ Read successful: {len(data)} bytes")
             self.append_log(f"First 32 bytes (hex): {data.hex()}")

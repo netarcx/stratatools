@@ -365,6 +365,9 @@ class AutoRefillStation:
             time.sleep(1)
             verify = self.ow.read_memory(0, 512)
 
+            if verify is None:
+                raise Exception("Verification read failed")
+
             if bytes(verify) == bytes(encoded):
                 self.log.info("✓ REFILL SUCCESSFUL!")
                 self.show_message("SUCCESS!", "Cartridge", "refilled to", "100%")

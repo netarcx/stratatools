@@ -6,14 +6,15 @@ Connect to ESP32, search for device, read cartridge, and display info.
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-    QPushButton, QComboBox, QLineEdit, QTextEdit, QFormLayout
+    QPushButton, QComboBox, QLineEdit, QTextEdit, QFormLayout, QProgressBar
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QFont
 
 from stratatools import machine
 from stratatools.gui.controllers.serial_scanner import SerialPortScanner
 from stratatools.gui.controllers.cartridge_controller import CartridgeController
+from stratatools.gui.controllers.worker import run_async
 
 
 class ReadTab(QWidget):
@@ -22,8 +23,10 @@ class ReadTab(QWidget):
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
+        self.settings = QSettings()
         self.setup_ui()
         self.connect_signals()
+        self.restore_preferences()
 
     def setup_ui(self):
         """Setup the user interface"""
@@ -94,6 +97,21 @@ class ReadTab(QWidget):
         self.auto_detect_btn.setEnabled(False)
         device_row2.addWidget(self.auto_detect_btn)
 
+        self.quick_read_btn = QPushButton("Quick Read")
+        self.quick_read_btn.setToolTip(
+            "Search for the device and auto-detect its machine type in one step")
+        self.quick_read_btn.clicked.connect(self.quick_read)
+        self.quick_read_btn.setEnabled(False)
+        device_row2.addWidget(self.quick_read_btn)
+
+        self.self_test_btn = QPushButton("Safety Self-Test")
+        self.self_test_btn.setToolTip(
+            "Read and re-encode this cartridge WITHOUT writing, to prove the\n"
+            "tool reproduces printer-valid data. Run this before any real write.")
+        self.self_test_btn.clicked.connect(self.run_self_test)
+        self.self_test_btn.setEnabled(False)
+        device_row2.addWidget(self.self_test_btn)
+
         device_row2.addStretch()
 
         device_layout.addLayout(device_row2)
@@ -110,6 +128,16 @@ class ReadTab(QWidget):
         font = QFont("Courier")
         self.info_text.setFont(font)
         info_layout.addWidget(self.info_text)
+
+        # Fill-level gauge
+        gauge_layout = QHBoxLayout()
+        gauge_layout.addWidget(QLabel("Material remaining:"))
+        self.fill_gauge = QProgressBar()
+        self.fill_gauge.setRange(0, 100)
+        self.fill_gauge.setValue(0)
+        self.fill_gauge.setFormat("%p%")
+        gauge_layout.addWidget(self.fill_gauge)
+        info_layout.addLayout(gauge_layout)
 
         info_group.setLayout(info_layout)
         layout.addWidget(info_group)
@@ -142,7 +170,13 @@ class ReadTab(QWidget):
         else:
             port = self.port_combo.currentData()
             if port:
-                self.controller.connect(port)
+                self.settings.setValue("read/last_port", port)
+                self.connect_btn.setText("Connecting...")
+                run_async(
+                    self, self.controller.connect, port,
+                    busy=[self.connect_btn],
+                    on_result=lambda ok: self.connect_btn.setText(
+                        "Disconnect" if ok else "Connect"))
 
     def on_connection_changed(self, connected):
         """Handle connection status change"""
@@ -151,6 +185,7 @@ class ReadTab(QWidget):
             self.status_label.setStyleSheet("color: green; font-weight: bold;")
             self.connect_btn.setText("Disconnect")
             self.search_btn.setEnabled(True)
+            self.quick_read_btn.setEnabled(True)
             self.port_combo.setEnabled(False)
             self.refresh_btn.setEnabled(False)
         else:
@@ -159,27 +194,35 @@ class ReadTab(QWidget):
             self.connect_btn.setText("Connect")
             self.search_btn.setEnabled(False)
             self.read_btn.setEnabled(False)
+            self.auto_detect_btn.setEnabled(False)
+            self.quick_read_btn.setEnabled(False)
+            self.self_test_btn.setEnabled(False)
             self.port_combo.setEnabled(True)
             self.refresh_btn.setEnabled(True)
             self.rom_edit.clear()
 
     def search_device(self):
         """Search for 1-wire device"""
-        rom = self.controller.search_device()
+        run_async(self, self.controller.search_device,
+                  busy=[self.search_btn, self.read_btn, self.auto_detect_btn,
+                        self.quick_read_btn])
 
     def on_device_found(self, rom_address):
         """Handle device found"""
         self.rom_edit.setText(rom_address)
         self.read_btn.setEnabled(True)
         self.auto_detect_btn.setEnabled(True)
+        self.self_test_btn.setEnabled(True)
 
     def read_cartridge(self):
         """Read cartridge from device"""
         rom = self.rom_edit.text()
         machine_type = self.machine_combo.currentText()
+        self.settings.setValue("read/machine_type", machine_type)
 
         if rom:
-            self.controller.read_cartridge(rom, machine_type)
+            run_async(self, self.controller.read_cartridge, rom, machine_type,
+                      busy=[self.read_btn, self.auto_detect_btn, self.quick_read_btn])
 
     def on_cartridge_read(self, cartridge):
         """Display cartridge information"""
@@ -209,33 +252,114 @@ Remaining:              {remaining_pct:.1f}%
 
 Version:                {cartridge.version}
 Signature:              {cartridge.signature}
-Key Fragment:           {cartridge.key_fragment.hex()}
+Key Fragment:           {cartridge.key_fragment.decode("ascii", errors="ignore")}
 
 """
         self.info_text.setText(info)
+        self.update_gauge(remaining_pct)
+
+    def update_gauge(self, remaining_pct):
+        """Update the material fill-level gauge and color it by level."""
+        pct = int(max(0, min(100, round(remaining_pct))))
+        self.fill_gauge.setValue(pct)
+        if pct <= 10:
+            color = "#c0392b"   # red - nearly empty
+        elif pct <= 33:
+            color = "#e67e22"   # orange - low
+        else:
+            color = "#27ae60"   # green - healthy
+        self.fill_gauge.setStyleSheet(
+            "QProgressBar::chunk { background-color: %s; }" % color)
 
     def auto_detect_machine_type(self):
-        """Try all machine types until one works"""
+        """Try all machine types until one works (runs off the GUI thread)."""
         rom = self.rom_edit.text()
         if not rom:
             return
 
-        # Get all machine types
-        machine_types = list(machine.get_machine_types())
+        self.info_text.setText("Auto-detecting machine type (trying all types)...\n")
+        run_async(
+            self, self._detect_machine_type, rom,
+            busy=[self.read_btn, self.auto_detect_btn, self.quick_read_btn,
+                  self.search_btn],
+            on_result=self._on_auto_detect_done)
 
-        self.info_text.setText("Auto-detecting machine type...\n")
-
-        for mtype in machine_types:
-            self.info_text.append(f"Trying {mtype}...")
-
-            # Try to read with this machine type
-            cartridge = self.controller.read_cartridge(rom, mtype)
-
+    def _detect_machine_type(self, rom):
+        """Worker: probe each machine type, return the one that decodes."""
+        for mtype in machine.get_machine_types():
+            # silent: don't spam error dialogs for the types that don't match
+            cartridge = self.controller.read_cartridge(rom, mtype, silent=True)
             if cartridge is not None:
-                # Success!
-                self.machine_combo.setCurrentText(mtype)
-                self.info_text.append(f"\n✓ Success! Machine type is: {mtype.upper()}\n")
-                return
+                return mtype
+        return None
 
-        # No machine type worked
-        self.info_text.append("\n✗ Could not auto-detect machine type. Cartridge may be corrupted or incompatible.")
+    def _on_auto_detect_done(self, mtype):
+        """GUI thread: report auto-detect result."""
+        if mtype is not None:
+            self.machine_combo.setCurrentText(mtype)
+            self.settings.setValue("read/machine_type", mtype)
+            self.info_text.append(f"\n✓ Success! Machine type is: {mtype.upper()}\n")
+        else:
+            self.info_text.append(
+                "\n✗ Could not auto-detect machine type. "
+                "Cartridge may be corrupted or incompatible.")
+
+    def quick_read(self):
+        """One-click: search for the device, then auto-detect + read it."""
+        if not self.controller.is_connected():
+            return
+        self.info_text.setText("Quick Read: searching for device...\n")
+        run_async(
+            self, self._quick_read_worker,
+            busy=[self.read_btn, self.auto_detect_btn, self.quick_read_btn,
+                  self.search_btn],
+            on_result=self._on_auto_detect_done)
+
+    def _quick_read_worker(self):
+        """Worker: search for the device, then auto-detect its machine type."""
+        rom = self.controller.search_device()
+        if not rom:
+            return None
+        return self._detect_machine_type(rom)
+
+    def run_self_test(self):
+        """Non-destructive encode self-test on the current cartridge."""
+        rom = self.rom_edit.text()
+        if not rom:
+            return
+        machine_type = self.machine_combo.currentText()
+        self.info_text.setText(
+            "Running safety self-test (reads and re-encodes; does NOT write)...\n")
+        run_async(
+            self, self.controller.verify_encode_roundtrip, rom, machine_type,
+            busy=[self.read_btn, self.auto_detect_btn, self.quick_read_btn,
+                  self.search_btn, self.self_test_btn],
+            on_result=self._on_self_test_done)
+
+    def _on_self_test_done(self, report):
+        """Render the self-test report and a clear verdict."""
+        verdict = report.get("verdict")
+        lines = list(report.get("messages", []))
+        lines.append("")
+        if verdict == "identical":
+            lines.append("VERDICT: ✅ SAFE — this tool reproduces the cartridge exactly.")
+        elif verdict == "equivalent":
+            lines.append("VERDICT: ✅ SAFE — re-encoded data is printer-valid and equivalent.")
+        else:
+            lines.append("VERDICT: ⛔ DO NOT WRITE — encode did not reproduce a valid cartridge.")
+        self.info_text.setText("\n".join(lines))
+
+    def restore_preferences(self):
+        """Restore the last-used port and machine type from settings."""
+        last_type = self.settings.value("read/machine_type")
+        if last_type:
+            idx = self.machine_combo.findText(last_type)
+            if idx >= 0:
+                self.machine_combo.setCurrentIndex(idx)
+
+        last_port = self.settings.value("read/last_port")
+        if last_port:
+            for i in range(self.port_combo.count()):
+                if self.port_combo.itemData(i) == last_port:
+                    self.port_combo.setCurrentIndex(i)
+                    break
