@@ -108,3 +108,9 @@ $RECYCLE.BIN/
 cartridge_dump.bin
 test_*.bin
 *.hex
+
+# ESP32-C3 firmware: its lib/ holds real C++ source, not Python build output,
+# so override the generic `lib/` ignore above. Ignore PlatformIO build output.
+!esp32_cartridge_refill/lib/
+!esp32_cartridge_refill/lib/**
+esp32_cartridge_refill/.pio/
