@@ -1,0 +1,6 @@
+# The repo-root .gitignore has a Python "lib/" rule; this project keeps its
+# firmware sources in lib/, so re-include them here.
+!lib/
+
+# PlatformIO build output
+.pio/
