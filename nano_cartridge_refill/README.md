@@ -38,6 +38,9 @@ it holds a recovery image for that exact cartridge to tell the two apart.
 
 USB serial (115200) prints details of each step.
 
+> **Bench reference:** [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) has the full
+> LED code table, recovery procedure, and first bring-up checklist.
+
 ## Recovering an interrupted write
 
 The 113-byte image goes out as four scratchpad→verify→copy cycles. If power
