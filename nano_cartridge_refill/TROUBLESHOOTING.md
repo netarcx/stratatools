@@ -22,7 +22,7 @@ short blinks — repeated three times. Count the long ones first.
 
 | Code | Meaning | What to do |
 |------|---------|-----------|
-| **1-1** | No device found on the 1-Wire bus | Check D3 wiring, the pull-up, and cartridge GND. See §3. |
+| **1-1** | No device found on the 1-Wire bus | Check D4 wiring, the pull-up, and cartridge GND. See §3. |
 | **1-2** | Read failed | Same as 1-1; usually a marginal connection. |
 | **1-3** | Bus busy — another master is driving the line | The cartridge is still in the printer, or the SERVICE/RUN switch is in RUN. See §5. |
 | **2-1** | Not a valid cartridge for this printer | Wrong machine type, or not a Stratasys cartridge. The module writes nothing. See §4. |
@@ -101,7 +101,7 @@ In likely order:
 4. **Cartridge VCC not connected.** Do not run the EEPROM parasite-powered off
    the data line — the module does not assert a strong pull-up during the
    EEPROM's programming window, so writes will be marginal or fail.
-5. **Wrong pin.** Data is **D3**.
+5. **Wrong pin.** Data is **D4**.
 
 A quick check: with everything connected and the module idle, the 1-Wire line
 should sit at ~5 V. If it reads ~0 V, something is holding it low — most often
@@ -136,7 +136,7 @@ it reports **1-3** and refuses.
 300 ms and starts talking a moment later. The firmware cannot see that coming.
 
 **So the hardware must break the connection.** Fit a SERVICE/RUN switch that
-physically disconnects **D3 and the pull-up** from the cartridge line in RUN.
+physically disconnects **D4 and the pull-up** from the cartridge line in RUN.
 
 > ### Never leave the module connected but unpowered
 >

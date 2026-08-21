@@ -4,3 +4,6 @@
 
 # PlatformIO build output
 .pio/
+
+# Generated Arduino IDE sketch folder (make_arduino_sketch.sh)
+arduino/

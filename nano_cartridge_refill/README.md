@@ -84,11 +84,11 @@ EEPROM map: 16-byte header (magic + power-up counter), then 7 × 127-byte slots
 
 | Signal        | Pin | Notes                                                      |
 |---------------|-----|------------------------------------------------------------|
-| 1-Wire data   | D3  | **4.7 kΩ pull-up to +5 V** — but see *Embedded in a cartridge* |
-| ACTION button | D2  | momentary to GND (internal pull-up)                        |
-| STATUS button | D4  | momentary to GND (internal pull-up); optional — unwired it reads high and is inert |
-| External LED  | D5  | LED + ~330 Ω to GND                                        |
-| Onboard LED   | D13 | mirrors D5                                                 |
+| 1-Wire data   | D4  | **4.7 kΩ pull-up to +5 V** — but see *Embedded in a cartridge* |
+| ACTION button | D9  | momentary to GND (internal pull-up)                        |
+| STATUS button | D2  | momentary to GND (internal pull-up); optional — unwired it reads high and is inert |
+| External LED  | D8  | LED + ~330 Ω to GND                                        |
+| Onboard LED   | D13 | mirrors D8                                                 |
 | GND / 5V      | —   | shared with the cartridge EEPROM                           |
 
 ## Controls and result codes
@@ -142,7 +142,7 @@ does **not** catch a printer that is merely connected and idle, and then starts
 a transaction a moment later.
 
 **What hardware has to do.** Fit a **SERVICE / RUN switch** that physically
-disconnects D3 *and* the Nano's pull-up from the cartridge's 1-Wire line in the
+disconnects D4 *and* the Nano's pull-up from the cartridge's 1-Wire line in the
 RUN position. Two reasons, and the second is the one that bites:
 
 1. Only a physical break removes the two-master race entirely.
@@ -208,8 +208,9 @@ Stoffregen, then open and upload the generated `.ino`.
 
 Host-test the codec first (recommended, no hardware needed):
 ```
-g++ -std=c++11 -I lib/stratasys -I test \
+g++ -std=c++11 -I lib/stratasys -I lib/backup -I test \
     lib/stratasys/des.cpp lib/stratasys/stratasys_codec.cpp lib/stratasys/f64.cpp \
+    lib/backup/cartridge_backup.cpp \
     test/host_test.cpp -o /tmp/host_test && /tmp/host_test
 ```
 

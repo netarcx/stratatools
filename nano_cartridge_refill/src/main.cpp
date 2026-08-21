@@ -30,12 +30,12 @@
  * operate at all in that state.
  *
  * WIRING (Arduino Nano / Uno / Pro Mini -- any ATmega328P board):
- *   D3  1-Wire data, 4.7k pull-up to +5V   (see the README before adding a
+ *   D4  1-Wire data, 4.7k pull-up to +5V   (see the README before adding a
  *                                           second pull-up alongside a printer)
- *   D2  ACTION button to GND               (internal pull-up)
- *   D4  STATUS button to GND               (internal pull-up; optional)
- *   D5  external LED, via ~330R to GND
- *   D13 onboard LED, mirrors D5
+ *   D9  ACTION button to GND               (internal pull-up)
+ *   D2  STATUS button to GND               (internal pull-up; optional)
+ *   D8  external LED, via ~330R to GND
+ *   D13 onboard LED, mirrors D8
  *
  * NOTE ON 5V: a Nano runs its I/O at 5 V. The DS2433 in the cartridge is rated
  * 2.8-5.25 V, so pull the 1-Wire line up to the Nano's +5V rail -- NOT to 3.3V.
@@ -54,12 +54,12 @@
 #include "des.h"
 
 // ---- Configuration --------------------------------------------------------
-static const uint8_t ONEWIRE_PIN = 3;
-static const uint8_t BUTTON_PIN  = 2;   // ACTION button to GND; pressed = LOW
-static const uint8_t STATUS_PIN  = 4;   // STATUS button to GND (optional -- reads
+static const uint8_t ONEWIRE_PIN = 4;
+static const uint8_t BUTTON_PIN  = 9;   // ACTION button to GND; pressed = LOW
+static const uint8_t STATUS_PIN  = 2;   // STATUS button to GND (optional -- reads
                                         // high and stays inert if not wired)
 static const uint8_t LED_PIN     = LED_BUILTIN;   // D13, onboard
-static const uint8_t EXT_LED_PIN = 5;   // external LED + series resistor to GND
+static const uint8_t EXT_LED_PIN = 8;   // external LED + series resistor to GND
 static const bool    LED_ACTIVE_LOW = false;      // both LEDs are active-high
 
 // Prodigy / P-class machine key (machine.py "prodigy" = 5394D7657CED641D)
