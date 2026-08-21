@@ -17,7 +17,8 @@
  * EEPROM map (byte offsets):
  *   0x000  magic[4]        "SRB1"
  *   0x004  boot counter    uint32 LE
- *   0x008  reserved[8]     zeroed at format
+ *   0x008  last result     major, minor (blink code of the last operation)
+ *   0x00A  reserved[6]     zeroed at format
  *   0x010  slot[0..6]      127 bytes each -> last byte at 904 of 1023
  *
  * Slot layout (127 bytes):
@@ -56,6 +57,12 @@ bool backup_load(const uint8_t rom[8], uint8_t image_out[BACKUP_IMAGE_LEN]);
 
 // How many slots currently hold a valid backup.
 uint8_t backup_count(void);
+
+// Last operation's blink code, persisted so an embedded unit can be asked what
+// went wrong after a power cycle, with no serial console attached.
+// major == 0 means "nothing recorded yet".
+void backup_set_last_result(uint8_t major, uint8_t minor);
+void backup_get_last_result(uint8_t *major, uint8_t *minor);
 
 #ifndef __AVR__
 // Host builds keep the store in RAM so test/host_test.cpp can exercise save,

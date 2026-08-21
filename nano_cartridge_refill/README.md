@@ -29,24 +29,12 @@ On a 1-second hold the firmware:
 7. Reads it back and confirms a byte-exact match.
 
 LED feedback (onboard LED on D13):
-- **solid** while working
-- **3 slow blinks** = refill success
-- **2 slow blinks** = dry run OK, nothing written
-- **one long blink + three short, repeated 3×** = the cartridge may be
-  **half-written** — power-cycle holding the button to restore it
-- **2 fast blinks** = restore: no backup stored for this cartridge
-- **3 fast blinks** = 1-Wire bus or read failure (cartridge untouched)
-- **4 fast blinks** = could not save the recovery backup (refill aborted)
-- **5 fast blinks** = image rejected — wrong printer type, or restore found
-  nothing to repair
-- **continuous fast blink at boot** = crypto self-test failed (won't operate)
+The LED is solid while working. See **Controls and result codes** below for the
+full code table.
 
-The half-written code is deliberately unlike the others: it is the only outcome
-that needs you to do something, and it must not be mistaken for a benign bus
-error. If a refill is interrupted, the *next* button press reports it with this
-code rather than claiming the cartridge is the wrong printer type — the firmware
-checks whether it holds a recovery image for that exact cartridge to tell the
-two apart.
+If a refill is interrupted, the next attempt reports **2-2** rather than
+claiming the cartridge is the wrong printer type — the firmware checks whether
+it holds a recovery image for that exact cartridge to tell the two apart.
 
 USB serial (115200) prints details of each step.
 
@@ -61,7 +49,8 @@ is the one genuine failure mode, and it exists on every microcontroller.
 So before every write, the pre-write image is stored in the ATmega's own 1 KB
 EEPROM, keyed by the cartridge's 1-Wire ROM. To put it back:
 
-> **Hold the button down while powering up the Nano.** The LED blinks while it
+> **Hold STATUS for 3 seconds** (or, if STATUS isn't wired, hold ACTION down
+> while powering up the Nano). The LED blinks while it
 > counts down — release within 3 seconds to cancel. After 3 seconds it goes
 > solid; release the button and the last known-good image for the cartridge on
 > the bus is written back verbatim, **skipping validation**, then verified.
@@ -90,12 +79,85 @@ EEPROM map: 16-byte header (magic + power-up counter), then 7 × 127-byte slots
 
 ## Wiring
 
-| Signal      | Pin | Notes                                              |
-|-------------|-----|----------------------------------------------------|
-| 1-Wire data | D3  | **4.7 kΩ pull-up to +5 V** required                |
-| Button      | D2  | momentary button to GND (internal pull-up is used) |
-| LED         | D13 | onboard LED (active-high)                          |
-| GND / 5V    | —   | shared with the cartridge EEPROM                   |
+| Signal        | Pin | Notes                                                      |
+|---------------|-----|------------------------------------------------------------|
+| 1-Wire data   | D3  | **4.7 kΩ pull-up to +5 V** — but see *Embedded in a cartridge* |
+| ACTION button | D2  | momentary to GND (internal pull-up)                        |
+| STATUS button | D4  | momentary to GND (internal pull-up); optional — unwired it reads high and is inert |
+| External LED  | D5  | LED + ~330 Ω to GND                                        |
+| Onboard LED   | D13 | mirrors D5                                                 |
+| GND / 5V      | —   | shared with the cartridge EEPROM                           |
+
+## Controls and result codes
+
+Designed to be operated with no computer attached.
+
+| Control | Action | Result |
+|---------|--------|--------|
+| ACTION  | tap    | Dry run — read, decode, report. **Writes nothing.** |
+| ACTION  | hold 1 s | Refill. LED blinks while held, solid once armed. |
+| STATUS  | tap    | Replay the last result code, then blink the number of stored backups |
+| STATUS  | hold 3 s | Restore this cartridge from its saved image |
+
+Every outcome is a two-part code: **MAJOR long blinks, then MINOR short blinks**,
+repeated three times. Two short groups are much easier to count correctly than
+one run of eleven blinks.
+
+| Code | Meaning |
+|------|---------|
+| 1-1 | No device on the 1-Wire bus |
+| 1-2 | Read failed |
+| 1-3 | Bus busy — another master active (cartridge still in the printer?) |
+| 2-1 | Not a valid cartridge for this printer |
+| 2-2 | Doesn't validate but a backup exists — **likely half-written, restore it** |
+| 2-3 | Restore refused: the cartridge is already valid |
+| 3-1 | Could not save the recovery backup (refill aborted, cartridge untouched) |
+| 3-2 | Write failed |
+| 3-3 | Write verify mismatch |
+| 3-4 | Re-encoded image failed its final check (nothing written) |
+| 4-1 | No backup stored for this cartridge |
+| 4-2 | Stored backup does not validate |
+
+Success is a deliberately different shape — slow even blinks, no long preamble:
+**2** = dry run OK, **3** = refill OK, **4** = restore OK. Continuous fast
+blinking at power-up means the crypto self-test failed; it will not operate.
+
+The last code is kept in the ATmega's EEPROM, so it survives a power cycle and a
+STATUS tap will replay it — you can find out what went wrong hours later with
+nothing but the LED.
+
+## Embedded in a cartridge
+
+Putting the Nano *inside* the cartridge means it and the printer share the
+1-Wire bus. Firmware alone cannot make that safe, so read this first.
+
+**The firmware's part.** Before any write, both the refill and restore paths
+sample the bus for 300 ms with the Nano's pin high-impedance. If anything pulls
+the line low in that window, another master is talking and the operation is
+refused with code **1-3**. That catches an *actively communicating* printer. It
+does **not** catch a printer that is merely connected and idle, and then starts
+a transaction a moment later.
+
+**What hardware has to do.** Fit a **SERVICE / RUN switch** that physically
+disconnects D3 *and* the Nano's pull-up from the cartridge's 1-Wire line in the
+RUN position. Two reasons, and the second is the one that bites:
+
+1. Only a physical break removes the two-master race entirely.
+2. An **unpowered** Nano left connected is worse than a powered one. The AVR's
+   ESD clamp diode conducts from the I/O pin into its own VCC rail, so the pin
+   loads the line and can parasitically half-power the chip — and a 4.7 kΩ
+   pull-up to a rail sitting at 0 V actively **holds the bus low**, which stops
+   the printer reading the cartridge at all. Never leave the module connected
+   and unpowered.
+
+**Do not stack pull-ups.** If the printer already provides the bus pull-up,
+adding a second 4.7 kΩ in parallel gives ~2.35 kΩ. Put the pull-up on the
+switched side so only one is ever present.
+
+A DPDT slide switch handles both jobs: one pole for the data line and pull-up,
+the other for the Nano's power. If you have a spare pin, wiring the switch
+position to it so the firmware can refuse outright in RUN is a cheap extra
+interlock — but the physical break is what actually guarantees safety.
 
 Change the pins / machine type at the top of `src/main.cpp`. The Prodigy key is
 `5394D7657CED641D`; other printers' keys are in `stratatools/machine.py`.

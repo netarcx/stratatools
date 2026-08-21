@@ -8,7 +8,8 @@
 // ---- Layout ---------------------------------------------------------------
 static const uint16_t OFF_MAGIC        = 0x000;
 static const uint16_t OFF_BOOT_COUNTER = 0x004;
-static const uint16_t OFF_RESERVED     = 0x008;
+static const uint16_t OFF_LAST_RESULT  = 0x008;   // major, minor
+static const uint16_t OFF_RESERVED     = 0x00A;
 static const uint16_t OFF_SLOTS        = 0x010;
 
 static const uint8_t  SLOT_SEQ   = 0;
@@ -108,7 +109,9 @@ static bool slotRomMatches(uint8_t i, const uint8_t rom[8]) {
 // ---- Public API -----------------------------------------------------------
 static void format(void) {
     eeWrite32(OFF_BOOT_COUNTER, 0);
-    for (uint8_t i = 0; i < 8; i++) eeWrite((uint16_t)(OFF_RESERVED + i), 0);
+    eeWrite(OFF_LAST_RESULT, 0);
+    eeWrite((uint16_t)(OFF_LAST_RESULT + 1), 0);
+    for (uint8_t i = 0; i < 6; i++) eeWrite((uint16_t)(OFF_RESERVED + i), 0);
     // Clearing each slot's seq is enough to mark it free; the 113-byte payloads
     // are left alone so formatting costs 28 EEPROM writes rather than ~900.
     for (uint8_t i = 0; i < BACKUP_SLOTS; i++) slotInvalidate(i);
@@ -132,6 +135,16 @@ uint32_t backup_bump_boot_counter(void) {
     uint32_t c = eeRead32(OFF_BOOT_COUNTER) + 1UL;
     eeWrite32(OFF_BOOT_COUNTER, c);
     return c;
+}
+
+void backup_set_last_result(uint8_t major, uint8_t minor) {
+    eeWrite(OFF_LAST_RESULT, major);
+    eeWrite((uint16_t)(OFF_LAST_RESULT + 1), minor);
+}
+
+void backup_get_last_result(uint8_t *major, uint8_t *minor) {
+    if (major) *major = eeRead(OFF_LAST_RESULT);
+    if (minor) *minor = eeRead((uint16_t)(OFF_LAST_RESULT + 1));
 }
 
 uint8_t backup_count(void) {

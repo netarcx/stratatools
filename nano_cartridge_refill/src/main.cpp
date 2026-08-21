@@ -1,40 +1,48 @@
 /*
  * Standalone Stratasys cartridge refill -- Arduino Nano (ATmega328P)
  *
- * TAP the button to inspect a cartridge -- it reads, decodes and prints what is
- * on it, and writes nothing. HOLD the button for 1 second to actually refill it
- * (current quantity = initial, plus a fresh random serial number), re-encrypt,
- * write it back and verify the read-back -- all with no PC. The LED blinks
- * while you hold and goes solid once the refill is committed.
+ * Designed to be embedded in the cartridge and operated with no computer
+ * attached: every outcome is reported on an external LED as a two-part blink
+ * code, and the last code is kept in EEPROM so it survives a power cycle and
+ * can be replayed on demand.
  *
- * Before every write the pre-write image is saved to the ATmega's internal
- * EEPROM. If a write is ever interrupted -- power loss, reset, cartridge pulled
- * mid-write -- the cartridge is left with failing checksums, which the printer
- * rejects and which this firmware also refuses to refill. To recover, hold the
- * button while powering up: after 3 seconds the LED goes solid, and on release
- * the last known-good image for the cartridge on the bus is written back
- * verbatim, skipping validation.
+ * CONTROLS
+ *   ACTION button  tap    -> dry run: read, decode and report; writes nothing
+ *                  hold 1s-> refill (LED blinks while held, solid once armed)
+ *   STATUS button  tap    -> replay the last result code, then blink the number
+ *                            of recovery backups held
+ *                  hold 3s-> restore this cartridge from its saved image
+ *   (Holding ACTION through power-up also enters restore, as a fallback if the
+ *    STATUS button is not wired.)
  *
- * Configured for a PRODIGY / P-class printer. The cartridge MUST be out of the
- * printer when you press the button (the printer and this module must not drive
- * the 1-Wire bus at the same time).
+ * RESULT CODES -- MAJOR long blinks, then MINOR short blinks, repeated 3x:
+ *   1-1 no device on the 1-Wire bus        1-2 read failed
+ *   1-3 bus busy: another master active (cartridge still in the printer?)
+ *   2-1 not a valid cartridge for this printer
+ *   2-2 does not validate but a backup exists -- likely half-written, restore it
+ *   2-3 restore refused: the cartridge is already valid
+ *   3-1 could not save the recovery backup  3-2 write failed
+ *   3-3 write verify mismatch               3-4 re-encoded image failed checks
+ *   4-1 no backup stored for this cartridge 4-2 stored backup does not validate
+ * Success is a different shape -- slow even blinks, no long preamble:
+ *   2 = dry run OK, 3 = refill OK, 4 = restore OK.
+ * Continuous fast blinking at power-up = crypto self-test failed; it will not
+ * operate at all in that state.
  *
- * LED codes: 3 slow blinks = refill success; 2 slow = dry run OK (nothing
- * written); 2 fast = no backup for this cartridge;
- * 3 fast = 1-Wire bus/read failure (cartridge untouched); 4 fast = could not
- * save the recovery backup (refill aborted); 5 fast = image rejected (wrong
- * printer type, or nothing to repair); one long blink + three short, repeated
- * = the cartridge may be HALF-WRITTEN, restore it; continuous fast = crypto
- * self-test failed.
- *
- * Wiring (Arduino Nano / Uno / Pro Mini -- any ATmega328P board):
- *   ONEWIRE_PIN (D3)  -- EEPROM data, with a 4.7k pull-up to +5V
- *   BUTTON_PIN  (D2)  -- momentary button to GND (uses the internal pull-up)
- *   LED_PIN     (D13) -- the onboard LED (active-high)
+ * WIRING (Arduino Nano / Uno / Pro Mini -- any ATmega328P board):
+ *   D3  1-Wire data, 4.7k pull-up to +5V   (see the README before adding a
+ *                                           second pull-up alongside a printer)
+ *   D2  ACTION button to GND               (internal pull-up)
+ *   D4  STATUS button to GND               (internal pull-up; optional)
+ *   D5  external LED, via ~330R to GND
+ *   D13 onboard LED, mirrors D5
  *
  * NOTE ON 5V: a Nano runs its I/O at 5 V. The DS2433 in the cartridge is rated
- * 2.8-5.25 V, so pull the 1-Wire line up to the Nano's +5V rail -- NOT to 3.3V,
- * and do not mix this with a 3.3 V board on the same bus.
+ * 2.8-5.25 V, so pull the 1-Wire line up to the Nano's +5V rail -- NOT to 3.3V.
+ *
+ * BEFORE EMBEDDING THIS IN A CARTRIDGE, read the "Embedded in a cartridge"
+ * section of the README. Sharing the 1-Wire bus with the printer needs care
+ * beyond what firmware alone can guarantee.
  */
 #include <Arduino.h>
 #include <string.h>
@@ -47,9 +55,12 @@
 
 // ---- Configuration --------------------------------------------------------
 static const uint8_t ONEWIRE_PIN = 3;
-static const uint8_t BUTTON_PIN  = 2;   // to GND; pressed = LOW
-static const uint8_t LED_PIN     = LED_BUILTIN;   // D13
-static const bool    LED_ACTIVE_LOW = false;      // Nano's onboard LED is active-high
+static const uint8_t BUTTON_PIN  = 2;   // ACTION button to GND; pressed = LOW
+static const uint8_t STATUS_PIN  = 4;   // STATUS button to GND (optional -- reads
+                                        // high and stays inert if not wired)
+static const uint8_t LED_PIN     = LED_BUILTIN;   // D13, onboard
+static const uint8_t EXT_LED_PIN = 5;   // external LED + series resistor to GND
+static const bool    LED_ACTIVE_LOW = false;      // both LEDs are active-high
 
 // Prodigy / P-class machine key (machine.py "prodigy" = 5394D7657CED641D)
 static const uint8_t MACHINE[8] PROGMEM = {0x53,0x94,0xD7,0x65,0x7C,0xED,0x64,0x1D};
@@ -89,38 +100,105 @@ static uint32_t g_rng;
 
 // ---- LED helpers ----------------------------------------------------------
 static void led(bool on) {
-    digitalWrite(LED_PIN, (on ^ LED_ACTIVE_LOW) ? HIGH : LOW);
+    uint8_t level = (on ^ LED_ACTIVE_LOW) ? HIGH : LOW;
+    digitalWrite(LED_PIN, level);
+    digitalWrite(EXT_LED_PIN, level);   // external LED mirrors the onboard one
 }
 static void blink(uint8_t times, uint16_t on_ms, uint16_t off_ms) {
     for (uint8_t i = 0; i < times; i++) { led(true); delay(on_ms); led(false); delay(off_ms); }
 }
-static void fail(const __FlashStringHelper *msg, uint8_t blinks, uint16_t ms) {
-    Serial.print(F("ERROR: ")); Serial.println(msg);
-    led(false);
-    blink(blinks, ms, ms);
+
+// ---- Result codes ---------------------------------------------------------
+// This unit lives inside a cartridge with no serial console attached, so the
+// LED is the only diagnostic. Every outcome is a two-part code: MAJOR long
+// blinks (the category) then MINOR short blinks (the detail), repeated. Two
+// short groups are far easier to count correctly than one long run of eleven.
+//
+//   1-x  bus / hardware      1 no device   2 read failed   3 bus busy
+//   2-x  cartridge content   1 wrong printer type   2 half-written (restore it)
+//                            3 restore refused: cartridge is already valid
+//   3-x  write / backup      1 backup save failed   2 write failed
+//                            3 verify mismatch      4 encode check failed
+//   4-x  restore             1 no backup stored     2 stored backup invalid
+//
+// Success is deliberately different in shape -- slow even blinks, no long
+// preamble: 2 = dry run OK, 3 = refill OK, 4 = restore OK.
+#define RC_OK_DRYRUN   2
+#define RC_OK_REFILL   3
+#define RC_OK_RESTORE  4
+
+#define RC_BUS         1
+#define RC_BUS_NODEV     1
+#define RC_BUS_READ      2
+#define RC_BUS_BUSY      3
+
+#define RC_CONTENT     2
+#define RC_CONTENT_TYPE  1
+#define RC_CONTENT_HALF  2
+#define RC_CONTENT_OK    3
+
+#define RC_WRITE       3
+#define RC_WRITE_BACKUP  1
+#define RC_WRITE_FAILED  2
+#define RC_WRITE_VERIFY  3
+#define RC_WRITE_ENCODE  4
+
+#define RC_RESTORE     4
+#define RC_RESTORE_NONE  1
+#define RC_RESTORE_BAD   2
+
+// Emit one two-part code, once.
+static void emitCode(uint8_t major, uint8_t minor) {
+    blink(major, 700, 300);
+    delay(500);
+    blink(minor, 150, 250);
 }
 
-// The one outcome that needs the user to act: the cartridge may be half-written.
-// Deliberately unlike every other code -- a long blink then three short, three
-// times -- because it must not be mistaken for a benign bus error.
-static void failDamaged(const __FlashStringHelper *msg) {
-    Serial.print(F("ERROR: ")); Serial.println(msg);
-    Serial.println(F("       The cartridge may be half-written. Power-cycle holding the"));
-    Serial.println(F("       button for 3s to restore the saved image."));
+// Report a failure: remember it, say it on serial for anyone who has a console,
+// and blink it three times so it can be read and confirmed.
+static void failCode(uint8_t major, uint8_t minor, const __FlashStringHelper *msg) {
+    Serial.print(F("ERROR ")); Serial.print((unsigned long)major);
+    Serial.print(F("-"));      Serial.print((unsigned long)minor);
+    Serial.print(F(": "));     Serial.println(msg);
+    backup_set_last_result(major, minor);
     led(false);
-    for (uint8_t i = 0; i < 3; i++) {
-        led(true); delay(800); led(false); delay(250);
-        blink(3, 100, 100);
-        delay(400);
-    }
+    delay(400);
+    for (uint8_t i = 0; i < 3; i++) { emitCode(major, minor); delay(1200); }
+}
+
+static void okCode(uint8_t blinks, const __FlashStringHelper *msg) {
+    Serial.println(msg);
+    backup_set_last_result(0, blinks);   // major 0 = success, minor = which
+    led(false);
+    delay(300);
+    blink(blinks, 400, 400);
 }
 
 // A single HIGH sample is not a release: contacts bounce. Require the button to
 // read high continuously before treating it as let go.
-static bool buttonReleasedStable() {
+static bool buttonReleasedStable(uint8_t pin) {
     for (uint8_t i = 0; i < 5; i++) {
-        if (digitalRead(BUTTON_PIN) == LOW) return false;
+        if (digitalRead(pin) == LOW) return false;
         delay(10);
+    }
+    return true;
+}
+
+// ---- Bus contention guard -------------------------------------------------
+// With our pin high-Z an idle 1-Wire bus sits high, held there by the pull-up.
+// Anything pulling it low while we are not driving it is a second master --
+// almost certainly the printer. Starting a write then would collide with a
+// printer transaction and leave the cartridge half-written, so refuse.
+//
+// This catches an ACTIVE printer, not merely a connected idle one. It is a
+// backstop, not a substitute for isolating the bus while the cartridge is in
+// the machine -- see the README.
+static bool busIdle(uint16_t ms) {
+    pinMode(ONEWIRE_PIN, INPUT);
+    unsigned long start = millis();
+    while (millis() - start < ms) {
+        if (digitalRead(ONEWIRE_PIN) == LOW) return false;
+        delayMicroseconds(50);          // 1-Wire slots are ~60us; this catches them
     }
     return true;
 }
@@ -220,7 +298,7 @@ static PressAction readPress() {
 
     unsigned long start = millis();
     bool committed = false;
-    while (!buttonReleasedStable()) {
+    while (!buttonReleasedStable(BUTTON_PIN)) {
         unsigned long held = millis() - start;
         if (held > 6000) {                       // stuck button: give up
             Serial.println(F("WARN: button held >6s - ignoring (stuck?)"));
@@ -248,7 +326,7 @@ static void doDryRun() {
     led(true);
 
     if (!ow.search()) {
-        fail(F("no cartridge found on 1-Wire bus"), 3, 120);
+        failCode(RC_BUS, RC_BUS_NODEV, F("no cartridge found on 1-Wire bus"));
         return;
     }
     char rom[17];
@@ -259,24 +337,60 @@ static void doDryRun() {
     }
 
     if (!ow.read(0, g_buf, STRATASYS_EEPROM_LEN)) {
-        fail(F("read failed"), 3, 120);
+        failCode(RC_BUS, RC_BUS_READ, F("read failed"));
         return;
     }
 
     if (!stratasys_decode(g_buf, g_machine, ow.romBytes())) {
         if (backup_load(ow.romBytes(), g_verify)) {
-            failDamaged(F("cartridge does not validate, but a recovery backup exists for it"));
+            failCode(RC_CONTENT, RC_CONTENT_HALF, F("does not validate but a backup exists - likely half-written"));
         } else {
-            fail(F("not a valid PRODIGY cartridge (wrong printer type?)"), 5, 80);
+            failCode(RC_CONTENT, RC_CONTENT_TYPE, F("not a valid PRODIGY cartridge (wrong printer type?)"));
         }
         return;
     }
 
     printCartridge(F("Contents:"), g_buf);
-    Serial.println(F("Dry run complete - cartridge NOT modified."));
     Serial.println(F("Hold the button 1s to actually refill it."));
+    okCode(RC_OK_DRYRUN, F("Dry run complete - cartridge NOT modified."));
+}
+
+// ---- Status button --------------------------------------------------------
+// The whole point of this button: get the unit's state out of it with no serial
+// console. Tap replays the last result code and then reports how many recovery
+// backups are stored. Hold 3s runs a restore, so repairing a half-written
+// cartridge does not require a power cycle once the unit is sealed in.
+static void doStatusReport() {
+    uint8_t major = 0, minor = 0;
+    backup_get_last_result(&major, &minor);
+
+    Serial.print(F("\nLast result: "));
+    if (major == 0 && minor == 0) {
+        Serial.println(F("(none recorded yet)"));
+    } else if (major == 0) {
+        Serial.print(F("success, code ")); Serial.println((unsigned long)minor);
+    } else {
+        Serial.print((unsigned long)major); Serial.print(F("-")); Serial.println((unsigned long)minor);
+    }
+    Serial.print(F("Recovery backups stored: ")); Serial.print((unsigned long)backup_count());
+    Serial.print(F(" of ")); Serial.println((unsigned long)BACKUP_SLOTS);
+
     led(false);
-    blink(2, 300, 200);   // 2 slow blinks = read OK, nothing written
+    delay(600);
+    if (major == 0 && minor == 0) {
+        blink(1, 150, 250);                  // nothing recorded
+    } else if (major == 0) {
+        blink(minor, 400, 400);              // replay the success pattern
+    } else {
+        emitCode(major, minor);              // replay the fault code
+    }
+
+    // Then the store level: a pause, then one short blink per stored backup
+    // (or one long blink if the store is empty).
+    delay(1500);
+    uint8_t n = backup_count();
+    if (n == 0) blink(1, 700, 300);
+    else        blink(n, 150, 250);
 }
 
 // ---- Refill sequence ------------------------------------------------------
@@ -284,8 +398,14 @@ static void doRefill() {
     Serial.println(F("\n=== Refill requested ==="));
     led(true);   // solid = busy
 
+    if (!busIdle(300)) {
+        failCode(RC_BUS, RC_BUS_BUSY,
+                 F("another 1-Wire master is active - cartridge still in the printer?"));
+        return;
+    }
+
     if (!ow.search()) {
-        fail(F("no cartridge found on 1-Wire bus"), 3, 120);
+        failCode(RC_BUS, RC_BUS_NODEV, F("no cartridge found on 1-Wire bus"));
         return;
     }
     char rom[17];
@@ -298,7 +418,7 @@ static void doRefill() {
     }
 
     if (!ow.read(0, g_buf, STRATASYS_EEPROM_LEN)) {
-        fail(F("read failed"), 3, 120);
+        failCode(RC_BUS, RC_BUS_READ, F("read failed"));
         return;
     }
 
@@ -315,9 +435,9 @@ static void doRefill() {
         // interrupted write -- and telling the user "wrong printer type" would
         // steer them away from the restore that fixes it.
         if (backup_load(ow.romBytes(), g_verify)) {
-            failDamaged(F("cartridge does not validate, but a recovery backup exists for it"));
+            failCode(RC_CONTENT, RC_CONTENT_HALF, F("does not validate but a backup exists - likely half-written"));
         } else {
-            fail(F("not a valid PRODIGY cartridge (wrong printer type?)"), 5, 80);
+            failCode(RC_CONTENT, RC_CONTENT_TYPE, F("not a valid PRODIGY cartridge (wrong printer type?)"));
         }
         return;
     }
@@ -326,7 +446,7 @@ static void doRefill() {
     // become the recovery copy. Refuse to write if the backup didn't stick:
     // writing without a way back is the thing this whole path exists to avoid.
     if (!backup_save(ow.romBytes(), g_verify)) {
-        fail(F("could not save recovery backup - refill aborted, cartridge untouched"), 4, 80);
+        failCode(RC_WRITE, RC_WRITE_BACKUP, F("could not save recovery backup - refill aborted"));
         return;
     }
     Serial.println(F("Recovery backup saved to internal EEPROM."));
@@ -351,25 +471,23 @@ static void doRefill() {
     // the recovery copy is already committed to internal EEPROM.
     memcpy(g_verify, g_buf, STRATASYS_EEPROM_LEN);
     if (!stratasys_decode(g_verify, g_machine, ow.romBytes())) {
-        fail(F("re-encoded image failed validation - nothing written"), 5, 80);
+        failCode(RC_WRITE, RC_WRITE_ENCODE, F("re-encoded image failed validation - nothing written"));
         return;
     }
 
     if (!ow.write(0, g_buf, STRATASYS_EEPROM_LEN)) {
-        failDamaged(F("write failed"));
+        failCode(RC_WRITE, RC_WRITE_FAILED, F("write failed"));
         return;
     }
 
     // Verify the read-back matches exactly
     if (!ow.read(0, g_verify, STRATASYS_EEPROM_LEN) ||
         memcmp(g_verify, g_buf, STRATASYS_EEPROM_LEN) != 0) {
-        failDamaged(F("write verification mismatch"));
+        failCode(RC_WRITE, RC_WRITE_VERIFY, F("write verification mismatch"));
         return;
     }
 
-    Serial.println(F("SUCCESS: cartridge refilled and verified."));
-    led(false);
-    blink(3, 300, 200);   // 3 slow blinks = success
+    okCode(RC_OK_REFILL, F("SUCCESS: cartridge refilled and verified."));
 }
 
 // ---- Restore sequence -----------------------------------------------------
@@ -380,8 +498,14 @@ static void doRestore() {
     Serial.println(F("\n=== RESTORE requested ==="));
     led(true);   // solid = busy
 
+    if (!busIdle(300)) {
+        failCode(RC_BUS, RC_BUS_BUSY,
+                 F("another 1-Wire master is active - cartridge still in the printer?"));
+        return;
+    }
+
     if (!ow.search()) {
-        fail(F("no cartridge found on 1-Wire bus"), 3, 120);
+        failCode(RC_BUS, RC_BUS_NODEV, F("no cartridge found on 1-Wire bus"));
         return;
     }
     char rom[17];
@@ -394,12 +518,12 @@ static void doRestore() {
     // destructive write with nothing to gain.
     if (ow.read(0, g_verify, STRATASYS_EEPROM_LEN) &&
         stratasys_decode(g_verify, g_machine, ow.romBytes())) {
-        fail(F("cartridge already validates - nothing to repair, refusing to overwrite"), 5, 80);
+        failCode(RC_CONTENT, RC_CONTENT_OK, F("cartridge already validates - nothing to repair"));
         return;
     }
 
     if (!backup_load(ow.romBytes(), g_buf)) {
-        fail(F("no backup stored for this cartridge"), 2, 80);
+        failCode(RC_RESTORE, RC_RESTORE_NONE, F("no backup stored for this cartridge"));
         return;
     }
 
@@ -408,18 +532,18 @@ static void doRestore() {
     // UID before committing it. A backup that cannot decode is not a repair.
     memcpy(g_verify, g_buf, STRATASYS_EEPROM_LEN);
     if (!stratasys_decode(g_verify, g_machine, ow.romBytes())) {
-        fail(F("stored backup does not validate - refusing to write it"), 5, 80);
+        failCode(RC_RESTORE, RC_RESTORE_BAD, F("stored backup does not validate - refusing to write it"));
         return;
     }
 
     Serial.println(F("Writing last known-good image (cartridge-side validation bypassed)..."));
     if (!ow.write(0, g_buf, STRATASYS_EEPROM_LEN)) {
-        fail(F("write failed"), 3, 120);
+        failCode(RC_WRITE, RC_WRITE_FAILED, F("write failed"));
         return;
     }
     if (!ow.read(0, g_verify, STRATASYS_EEPROM_LEN) ||
         memcmp(g_verify, g_buf, STRATASYS_EEPROM_LEN) != 0) {
-        fail(F("write verification mismatch"), 3, 120);
+        failCode(RC_WRITE, RC_WRITE_VERIFY, F("write verification mismatch"));
         return;
     }
 
@@ -432,9 +556,7 @@ static void doRestore() {
                          "with the configured printer key."));
     }
 
-    Serial.println(F("SUCCESS: cartridge restored."));
-    led(false);
-    blink(3, 300, 200);
+    okCode(RC_OK_RESTORE, F("SUCCESS: cartridge restored."));
 }
 
 // The restore gesture: button already down at power-up, held for 3 seconds.
@@ -450,7 +572,7 @@ static bool restoreGesture() {
             led(true);                         // solid = committed
             Serial.println(F("RESTORE armed - release the button."));
             unsigned long held = millis();
-            while (!buttonReleasedStable()) {
+            while (!buttonReleasedStable(BUTTON_PIN)) {
                 if (millis() - held > 10000) { // stuck button: don't run blind
                     Serial.println(F("WARN: button still held after 10s - cancelling restore."));
                     led(false);
@@ -472,7 +594,9 @@ void setup() {
     Serial.begin(115200);
     delay(300);
     pinMode(LED_PIN, OUTPUT);
+    pinMode(EXT_LED_PIN, OUTPUT);
     pinMode(BUTTON_PIN, INPUT_PULLUP);
+    pinMode(STATUS_PIN, INPUT_PULLUP);   // unwired reads high and stays inert
     led(false);
 
     memcpy_P(g_machine, MACHINE, 8);
@@ -502,11 +626,32 @@ void setup() {
         return;
     }
 
-    Serial.println(F("Insert cartridge (out of printer). TAP the button to inspect it,"));
-    Serial.println(F("or HOLD 1s to refill it."));
+    Serial.println(F("ACTION button: tap = inspect (read only), hold 1s = refill."));
+    Serial.println(F("STATUS button: tap = replay last code + store level, hold 3s = restore."));
 }
 
 void loop() {
+    // STATUS button: tap = report, hold 3s = restore.
+    if (digitalRead(STATUS_PIN) == LOW) {
+        delay(30);
+        if (digitalRead(STATUS_PIN) == LOW) {
+            unsigned long start = millis();
+            bool restore = false;
+            while (!buttonReleasedStable(STATUS_PIN)) {
+                if (millis() - start > 10000) break;      // stuck: treat as a tap
+                if (!restore && millis() - start >= RESTORE_HOLD_MS) {
+                    restore = true;
+                    led(true);                            // solid = restore armed
+                }
+                delay(10);
+            }
+            led(false);
+            if (restore) doRestore();
+            else         doStatusReport();
+            while (!buttonReleasedStable(STATUS_PIN)) delay(10);
+        }
+    }
+
     PressAction action = readPress();
     if (action == PRESS_DRYRUN) {
         doDryRun();
@@ -517,7 +662,7 @@ void loop() {
     if (action != PRESS_NONE) {
         // A press made *during* the operation would otherwise be waiting here
         // and immediately trigger another one.
-        while (!buttonReleasedStable()) delay(10);
+        while (!buttonReleasedStable(BUTTON_PIN)) delay(10);
     }
     delay(10);
 }
