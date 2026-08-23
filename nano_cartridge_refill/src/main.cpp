@@ -23,6 +23,7 @@
  *   2-3 restore refused: the cartridge is already valid
  *   3-1 could not save the recovery backup  3-2 write failed
  *   3-3 write verify mismatch               3-4 re-encoded image failed checks
+ *   3-5 written, but the cartridge read-back does not decode -- restore it
  *   4-1 no backup stored for this cartridge 4-2 stored backup does not validate
  * Success is a different shape -- slow even blinks, no long preamble:
  *   2 = dry run OK, 3 = refill OK, 4 = restore OK.
@@ -30,12 +31,13 @@
  * operate at all in that state.
  *
  * WIRING (Arduino Nano / Uno / Pro Mini -- any ATmega328P board):
- *   D4  1-Wire data, 4.7k pull-up to +5V   (see the README before adding a
+ *   D7  1-Wire data, 4.7k pull-up to +5V   (see the README before adding a
  *                                           second pull-up alongside a printer)
  *   D9  ACTION button to GND               (internal pull-up)
  *   D2  STATUS button to GND               (internal pull-up; optional)
- *   D8  external LED, via ~330R to GND
- *   D13 onboard LED, mirrors D8
+ *   D6  GREEN LED, via ~330R to GND  (success, and solid while busy)
+ *   D8  RED LED,   via ~330R to GND  (failures; stays lit until the next run)
+ *   D13 onboard LED, mirrors whichever is active
  *
  * NOTE ON 5V: a Nano runs its I/O at 5 V. The DS2433 in the cartridge is rated
  * 2.8-5.25 V, so pull the 1-Wire line up to the Nano's +5V rail -- NOT to 3.3V.
@@ -54,12 +56,13 @@
 #include "des.h"
 
 // ---- Configuration --------------------------------------------------------
-static const uint8_t ONEWIRE_PIN = 4;
+static const uint8_t ONEWIRE_PIN = 7;
 static const uint8_t BUTTON_PIN  = 9;   // ACTION button to GND; pressed = LOW
 static const uint8_t STATUS_PIN  = 2;   // STATUS button to GND (optional -- reads
                                         // high and stays inert if not wired)
 static const uint8_t LED_PIN     = LED_BUILTIN;   // D13, onboard
-static const uint8_t EXT_LED_PIN = 8;   // external LED + series resistor to GND
+static const uint8_t OK_LED_PIN  = 6;   // GREEN LED + ~330R to GND
+static const uint8_t ERR_LED_PIN = 8;   // RED LED   + ~330R to GND
 static const bool    LED_ACTIVE_LOW = false;      // both LEDs are active-high
 
 // Prodigy / P-class machine key (machine.py "prodigy" = 5394D7657CED641D)
@@ -99,13 +102,60 @@ static uint8_t g_machine[8];        // MACHINE copied out of flash
 static uint32_t g_rng;
 
 // ---- LED helpers ----------------------------------------------------------
+// Two external LEDs: one for outcomes that went well, one for outcomes that did
+// not. A single LED has to carry every result as a pattern, so telling a failed
+// write (3-2) from a failed backup (3-1) means counting "three long then two
+// short" correctly, through a closed case, once. Splitting by colour means the
+// category is instant and the blinks only have to carry the detail.
+//
+// The blink helpers drive whichever LED is currently selected, plus the onboard
+// one, which mirrors everything.
+static uint8_t g_activeLed = OK_LED_PIN;
+
+static void ledWrite(uint8_t pin, bool on) {
+    digitalWrite(pin, (on ^ LED_ACTIVE_LOW) ? HIGH : LOW);
+}
+
 static void led(bool on) {
-    uint8_t level = (on ^ LED_ACTIVE_LOW) ? HIGH : LOW;
-    digitalWrite(LED_PIN, level);
-    digitalWrite(EXT_LED_PIN, level);   // external LED mirrors the onboard one
+    ledWrite(LED_PIN, on);              // onboard mirrors whatever is active
+    ledWrite(g_activeLed, on);
+}
+
+// Switching LEDs extinguishes the old one, so selecting the OK LED at the start
+// of an operation is also what clears a standing error from the previous run.
+static void ledSelect(uint8_t pin) {
+    if (g_activeLed != pin) {
+        ledWrite(g_activeLed, false);
+        g_activeLed = pin;
+    }
 }
 static void blink(uint8_t times, uint16_t on_ms, uint16_t off_ms) {
     for (uint8_t i = 0; i < times; i++) { led(true); delay(on_ms); led(false); delay(off_ms); }
+}
+
+// ---- Power-on lamp test ----------------------------------------------------
+// Sealed inside a cartridge, these LEDs are the only thing that reports
+// anything -- and a burnt-out LED looks exactly like "nothing went wrong". So
+// prove both of them at every boot, before the crypto self-test that might need
+// to report a failure on one of them.
+//
+// Green twice, then red twice, then both together with the onboard LED. The
+// ORDER is the useful part: if red comes first, the two are wired the other way
+// round from what this firmware believes, and every code will read inverted.
+static void lampTest() {
+    for (uint8_t i = 0; i < 2; i++) {
+        ledWrite(OK_LED_PIN, true);   delay(250);
+        ledWrite(OK_LED_PIN, false);  delay(150);
+    }
+    delay(250);
+    for (uint8_t i = 0; i < 2; i++) {
+        ledWrite(ERR_LED_PIN, true);  delay(250);
+        ledWrite(ERR_LED_PIN, false); delay(150);
+    }
+    delay(250);
+    ledWrite(OK_LED_PIN, true);  ledWrite(ERR_LED_PIN, true);  ledWrite(LED_PIN, true);
+    delay(500);
+    ledWrite(OK_LED_PIN, false); ledWrite(ERR_LED_PIN, false); ledWrite(LED_PIN, false);
 }
 
 // ---- Result codes ---------------------------------------------------------
@@ -119,6 +169,7 @@ static void blink(uint8_t times, uint16_t on_ms, uint16_t off_ms) {
 //                            3 restore refused: cartridge is already valid
 //   3-x  write / backup      1 backup save failed   2 write failed
 //                            3 verify mismatch      4 encode check failed
+//                            5 read-back does not decode (something WAS written)
 //   4-x  restore             1 no backup stored     2 stored backup invalid
 //
 // Success is deliberately different in shape -- slow even blinks, no long
@@ -142,6 +193,7 @@ static void blink(uint8_t times, uint16_t on_ms, uint16_t off_ms) {
 #define RC_WRITE_FAILED  2
 #define RC_WRITE_VERIFY  3
 #define RC_WRITE_ENCODE  4
+#define RC_WRITE_READBACK 5
 
 #define RC_RESTORE     4
 #define RC_RESTORE_NONE  1
@@ -161,14 +213,22 @@ static void failCode(uint8_t major, uint8_t minor, const __FlashStringHelper *ms
     Serial.print(F("-"));      Serial.print((unsigned long)minor);
     Serial.print(F(": "));     Serial.println(msg);
     backup_set_last_result(major, minor);
+    ledSelect(ERR_LED_PIN);
     led(false);
     delay(400);
     for (uint8_t i = 0; i < 3; i++) { emitCode(major, minor); delay(1200); }
+
+    // Leave the error LED lit once the code has played out. With no STATUS
+    // button wired there is no way to replay a code, so a standing light is the
+    // only lasting sign that the last operation failed. It is cleared when the
+    // next operation starts.
+    ledWrite(ERR_LED_PIN, true);
 }
 
 static void okCode(uint8_t blinks, const __FlashStringHelper *msg) {
     Serial.println(msg);
     backup_set_last_result(0, blinks);   // major 0 = success, minor = which
+    ledSelect(OK_LED_PIN);
     led(false);
     delay(300);
     blink(blinks, 400, 400);
@@ -182,6 +242,50 @@ static bool buttonReleasedStable(uint8_t pin) {
         delay(10);
     }
     return true;
+}
+
+// ---- Post-write verification ----------------------------------------------
+// Nothing reports success until the cartridge itself has been re-read and
+// agrees. Three things have to hold, and on a parasite-powered part they fail
+// in different ways, so all three are checked:
+//
+//  1. A fresh read-back of the whole image matches what we meant to write.
+//     Catches a row that never programmed at all.
+//  2. A SECOND read-back, after a settle, still matches. This is the one that
+//     matters here: a starved programming window can leave a cell that reads
+//     back correctly moments after the copy and decays shortly after. A single
+//     immediate read cannot see that; two separated reads can.
+//  3. What the cartridge now holds decodes as a valid cartridge for this
+//     printer. Comparing against our own buffer only proves we wrote what we
+//     intended; this proves the intention itself is something the printer will
+//     accept.
+//
+// On success g_verify is left holding the decoded plaintext read back FROM THE
+// CARTRIDGE, so callers report what is actually on the part, not what they hoped
+// they put there. Returns 0 on success, else the RC_WRITE_* minor code.
+static uint8_t verifyWritten(const uint8_t *expected) {
+    if (!ow.read(0, g_verify, STRATASYS_EEPROM_LEN)) return RC_WRITE_VERIFY;
+    if (memcmp(g_verify, expected, STRATASYS_EEPROM_LEN) != 0) return RC_WRITE_VERIFY;
+
+    delay(500);                      // let a marginally-programmed cell decay
+
+    if (!ow.read(0, g_verify, STRATASYS_EEPROM_LEN)) return RC_WRITE_VERIFY;
+    if (memcmp(g_verify, expected, STRATASYS_EEPROM_LEN) != 0) return RC_WRITE_VERIFY;
+
+    // Destructive to g_verify, which has served its comparison purpose by now.
+    if (!stratasys_decode(g_verify, g_machine, ow.romBytes())) return RC_WRITE_READBACK;
+
+    return 0;
+}
+
+// Shared failure reporting for the three ways verification can end.
+static void failVerify(uint8_t code) {
+    if (code == RC_WRITE_READBACK) {
+        failCode(RC_WRITE, RC_WRITE_READBACK,
+                 F("cartridge read-back does not decode - do NOT use it; restore this cartridge"));
+    } else {
+        failCode(RC_WRITE, RC_WRITE_VERIFY, F("write verification mismatch"));
+    }
 }
 
 // ---- Bus contention guard -------------------------------------------------
@@ -323,6 +427,7 @@ static PressAction readPress() {
 // ---- Dry run: read and report, write nothing ------------------------------
 static void doDryRun() {
     Serial.println(F("\n=== Dry run (read only - nothing will be written) ==="));
+    ledSelect(OK_LED_PIN);
     led(true);
 
     if (!ow.search()) {
@@ -396,6 +501,7 @@ static void doStatusReport() {
 // ---- Refill sequence ------------------------------------------------------
 static void doRefill() {
     Serial.println(F("\n=== Refill requested ==="));
+    ledSelect(OK_LED_PIN);
     led(true);   // solid = busy
 
     if (!busIdle(300)) {
@@ -480,14 +586,13 @@ static void doRefill() {
         return;
     }
 
-    // Verify the read-back matches exactly
-    if (!ow.read(0, g_verify, STRATASYS_EEPROM_LEN) ||
-        memcmp(g_verify, g_buf, STRATASYS_EEPROM_LEN) != 0) {
-        failCode(RC_WRITE, RC_WRITE_VERIFY, F("write verification mismatch"));
-        return;
-    }
+    uint8_t vfail = verifyWritten(g_buf);
+    if (vfail) { failVerify(vfail); return; }
 
-    okCode(RC_OK_REFILL, F("SUCCESS: cartridge refilled and verified."));
+    // Report what the cartridge actually holds now, read back from the part.
+    printCartridge(F("After:"), g_verify);
+
+    okCode(RC_OK_REFILL, F("SUCCESS: cartridge refilled, read back twice and decoded."));
 }
 
 // ---- Restore sequence -----------------------------------------------------
@@ -496,6 +601,7 @@ static void doRefill() {
 // a previous write was interrupted part-way through.
 static void doRestore() {
     Serial.println(F("\n=== RESTORE requested ==="));
+    ledSelect(OK_LED_PIN);
     led(true);   // solid = busy
 
     if (!busIdle(300)) {
@@ -541,22 +647,12 @@ static void doRestore() {
         failCode(RC_WRITE, RC_WRITE_FAILED, F("write failed"));
         return;
     }
-    if (!ow.read(0, g_verify, STRATASYS_EEPROM_LEN) ||
-        memcmp(g_verify, g_buf, STRATASYS_EEPROM_LEN) != 0) {
-        failCode(RC_WRITE, RC_WRITE_VERIFY, F("write verification mismatch"));
-        return;
-    }
+    uint8_t vfail = verifyWritten(g_buf);
+    if (vfail) { failVerify(vfail); return; }
 
-    // Report what the cartridge now holds. g_verify is the read-back, and
-    // decoding it is destructive, but it has served its purpose by this point.
-    if (stratasys_decode(g_verify, g_machine, ow.romBytes())) {
-        printCartridge(F("Restored:"), g_verify);
-    } else {
-        Serial.println(F("NOTE: restored bytes verified, but they do not decode "
-                         "with the configured printer key."));
-    }
+    printCartridge(F("Restored:"), g_verify);
 
-    okCode(RC_OK_RESTORE, F("SUCCESS: cartridge restored."));
+    okCode(RC_OK_RESTORE, F("SUCCESS: cartridge restored, read back twice and decoded."));
 }
 
 // The restore gesture: button already down at power-up, held for 3 seconds.
@@ -594,18 +690,25 @@ void setup() {
     Serial.begin(115200);
     delay(300);
     pinMode(LED_PIN, OUTPUT);
-    pinMode(EXT_LED_PIN, OUTPUT);
+    pinMode(OK_LED_PIN, OUTPUT);
+    pinMode(ERR_LED_PIN, OUTPUT);
     pinMode(BUTTON_PIN, INPUT_PULLUP);
     pinMode(STATUS_PIN, INPUT_PULLUP);   // unwired reads high and stays inert
     led(false);
+    ledWrite(ERR_LED_PIN, false);
 
     memcpy_P(g_machine, MACHINE, 8);
 
     Serial.println(F("\nStratasys standalone refill (Arduino Nano) - PRODIGY"));
 
+    Serial.println(F("Lamp test: GREEN x2, then RED x2, then both."));
+    Serial.println(F("If red comes first, the two LEDs are swapped."));
+    lampTest();
+
     if (!selfTest()) {
         Serial.println(F("FATAL: crypto self-test FAILED - refusing to operate."));
         // Fast continuous blink forever: do not let a miscompiled build write.
+        ledSelect(ERR_LED_PIN);
         for (;;) blink(1, 60, 60);
     }
     Serial.println(F("Crypto self-test passed."));
@@ -650,6 +753,17 @@ void loop() {
             else         doStatusReport();
             while (!buttonReleasedStable(STATUS_PIN)) delay(10);
         }
+    }
+
+    // Serial trigger for the DRY RUN only. Useful on the bench, where the board
+    // may be inside a cartridge with no button reachable. Deliberately limited
+    // to the read-only path: refill and restore stay button-only, so anything
+    // that modifies a cartridge still needs a deliberate physical press and
+    // cannot be caused by line noise on the serial port.
+    if (Serial.available()) {
+        while (Serial.available()) Serial.read();
+        Serial.println(F("\n(serial) dry run - read only"));
+        doDryRun();
     }
 
     PressAction action = readPress();

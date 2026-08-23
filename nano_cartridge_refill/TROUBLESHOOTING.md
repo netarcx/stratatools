@@ -5,7 +5,20 @@ diagnosed from the LED alone — no computer required.
 
 ---
 
-## 1. Reading the LED
+## 1. Reading the LEDs
+
+**At power-up, expect the lamp test: green ×2, red ×2, then both.** If one LED
+never lights, it is dead or miswired and every code it would have carried is
+lost. If red runs first, the LEDs are swapped and all codes read inverted.
+
+**Which LED is blinking is the first thing to read.** Green (D6) means the
+operation succeeded; red (D8) means it failed, and the red LED stays lit after
+the code finishes until the next operation begins. A dark red LED means the last
+run was clean.
+
+Continuous fast blinking on **red** from power-up is the crypto self-test
+failing: the firmware will not operate at all in that state.
+
 
 The LED is **solid** while the module is working.
 
@@ -22,7 +35,7 @@ short blinks — repeated three times. Count the long ones first.
 
 | Code | Meaning | What to do |
 |------|---------|-----------|
-| **1-1** | No device found on the 1-Wire bus | Check D4 wiring, the pull-up, and cartridge GND. See §3. |
+| **1-1** | No device found on the 1-Wire bus | Check D7 wiring, the pull-up, and cartridge GND. See §3. |
 | **1-2** | Read failed | Same as 1-1; usually a marginal connection. |
 | **1-3** | Bus busy — another master is driving the line | The cartridge is still in the printer, or the SERVICE/RUN switch is in RUN. See §5. |
 | **2-1** | Not a valid cartridge for this printer | Wrong machine type, or not a Stratasys cartridge. The module writes nothing. See §4. |
@@ -101,11 +114,17 @@ In likely order:
 4. **Cartridge VCC not connected.** Do not run the EEPROM parasite-powered off
    the data line — the module does not assert a strong pull-up during the
    EEPROM's programming window, so writes will be marginal or fail.
-5. **Wrong pin.** Data is **D4**.
+5. **Wrong pin.** Data is **D7**.
 
 A quick check: with everything connected and the module idle, the 1-Wire line
 should sit at ~5 V. If it reads ~0 V, something is holding it low — most often
 an unpowered Nano still connected to the bus (§5).
+
+**Faster than guessing:** flash `tools/onewire_wiring_test/`. It is read-only,
+and it separates these causes for you — it distinguishes "line never idles
+high" (pull-up or short) from "resets go unanswered" (ground, VCC, wrong pin)
+from "answers, but not every time" (an intermittent joint), which is the one
+that survives a single successful read and then bites during a write.
 
 ---
 
@@ -136,7 +155,7 @@ it reports **1-3** and refuses.
 300 ms and starts talking a moment later. The firmware cannot see that coming.
 
 **So the hardware must break the connection.** Fit a SERVICE/RUN switch that
-physically disconnects **D4 and the pull-up** from the cartridge line in RUN.
+physically disconnects **D7 and the pull-up** from the cartridge line in RUN.
 
 > ### Never leave the module connected but unpowered
 >
@@ -152,6 +171,22 @@ physically disconnects **D4 and the pull-up** from the cartridge line in RUN.
 **Do not stack pull-ups.** If the printer already supplies the bus pull-up,
 adding a second 4.7 kΩ in parallel gives ~2.35 kΩ. Put yours on the *switched*
 side so only one is ever on the bus.
+
+---
+
+## 5b. Read-back does not decode (3-5)
+
+Something **was** written and the cartridge does not decode afterwards. Treat it
+as half-written: hold STATUS for 3 s to restore it from the backup the refill
+saved before writing.
+
+On a two-wire (parasite-powered) cartridge the likely cause is a starved
+programming window — the strong pull-up not holding through `tPROG`. Check that
+`writeBlock()` still sends the E-S byte with `power = 1` and calls `depower()`
+only after the delay.
+
+Distinguish this from **3-4**, which means the image failed its check *before*
+any byte was written and the cartridge was never touched.
 
 ---
 
@@ -233,6 +268,10 @@ state and will fast-blink forever.
 
 Work through this in order; each step only risks what the one before it proved.
 
+0. **Flash `tools/onewire_wiring_test/` and run it with the cartridge
+   connected.** It writes nothing, and it must report `RESULT: WIRING OK` with
+   20/20 presence pulses and 8/8 identical reads. Fix anything it flags before
+   loading the refill firmware — every fault below is cheaper to find here.
 1. **Power only, nothing else wired.** Expect the boot banner and a steady idle.
 2. **Tap ACTION with no cartridge connected.** Expect **1-1**. This proves the
    button, LED, EEPROM store and self-test all work, with nothing at risk.

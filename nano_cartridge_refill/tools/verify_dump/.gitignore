@@ -1,0 +1,3 @@
+# Build output of build.sh. The root .gitignore's *.bin rule does not catch it:
+# the binary has no extension.
+verify_dump

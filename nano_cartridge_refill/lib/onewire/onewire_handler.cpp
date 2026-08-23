@@ -161,10 +161,25 @@ bool OneWireHandler::writeBlock(uint16_t addr, const uint8_t* data, uint8_t len)
   ow.write(CMD_COPY_SCRATCHPAD);
   ow.write(ta1);
   ow.write(ta2);
-  ow.write(es);
 
-  // Wait for copy to complete (typically 10ms)
+  // The E-S byte goes out with power=1, which leaves the pin DRIVING the line
+  // high instead of releasing it to the pull-up. That matters here because this
+  // cartridge is wired with two conductors only -- data and ground -- so the
+  // DS2433 has no VCC and must run parasitically off this line. Programming
+  // draws far more than a 4.7k pull-up can supply, and a starved tPROG window
+  // is how a row ends up half-written. The AVR pin sourcing directly is the
+  // strong pull-up the datasheet asks for.
+  ow.write(es, 1);
+
+  // This does NOT replace the 4.7k pull-up on the data line, and does not fight
+  // it: while the pin drives high both ends of that resistor sit at +5V, so no
+  // current flows through it at all. depower() then returns the pin to
+  // high-impedance and the 4.7k goes back to holding the line, which is what
+  // every reset and time slot after this depends on. Releasing it before any
+  // further bus activity is the part that matters -- a driven-high pin during
+  // another device's low pulse would be a genuine conflict.
   delay(15);
+  ow.depower();
 
   // Confirm this row actually reached EEPROM before moving on. Leaving it to
   // the whole-image check at the end would mean the remaining blocks get

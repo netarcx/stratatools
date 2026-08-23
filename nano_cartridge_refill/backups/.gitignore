@@ -1,0 +1,4 @@
+# The repo-root .gitignore excludes *.bin as build output. These are cartridge
+# images, not artifacts -- for a cartridge that has since been written, this may
+# be the only surviving copy of its original contents. Keep them.
+!*.bin

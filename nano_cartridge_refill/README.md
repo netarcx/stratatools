@@ -84,12 +84,26 @@ EEPROM map: 16-byte header (magic + power-up counter), then 7 × 127-byte slots
 
 | Signal        | Pin | Notes                                                      |
 |---------------|-----|------------------------------------------------------------|
-| 1-Wire data   | D4  | **4.7 kΩ pull-up to +5 V** — but see *Embedded in a cartridge* |
+| 1-Wire data   | D7  | **4.7 kΩ pull-up to +5 V** — but see *Embedded in a cartridge* |
 | ACTION button | D9  | momentary to GND (internal pull-up)                        |
 | STATUS button | D2  | momentary to GND (internal pull-up); optional — unwired it reads high and is inert |
-| External LED  | D8  | LED + ~330 Ω to GND                                        |
-| Onboard LED   | D13 | mirrors D8                                                 |
+| Green LED     | D6  | LED + ~330 Ω to GND — success, and solid while busy         |
+| Red LED       | D8  | LED + ~330 Ω to GND — failures; **stays lit** until the next run |
+| Onboard LED   | D13 | mirrors whichever external LED is active                    |
 | GND / 5V      | —   | shared with the cartridge EEPROM                           |
+
+### Prove the wiring first
+
+`tools/onewire_wiring_test/` is a standalone, **read-only** sketch that checks
+this wiring before the refill firmware ever touches the bus: idle level,
+pull-up, bus contention, twenty presence pulses, ROM search, and eight repeated
+reads compared against each other. It reports on serial and repeats the verdict
+on the LED using the same codes as the firmware. Nothing else from this project
+is needed to build it — see that folder's README.
+
+Worth it because the faults it catches are the ones a single successful read
+hides: an intermittent connection that answers 18 resets out of 20, or a data
+line that isn't reaching the chip and reads a convincing block of `0xFF`.
 
 ## Controls and result codes
 
@@ -101,6 +115,22 @@ Designed to be operated with no computer attached.
 | ACTION  | hold 1 s | Refill. LED blinks while held, solid once armed. |
 | STATUS  | tap    | Replay the last result code, then blink the number of stored backups |
 | STATUS  | hold 3 s | Restore this cartridge from its saved image |
+
+### Power-on lamp test
+
+Every boot starts with **green ×2, then red ×2, then both together** with the
+onboard LED. It takes about 2.5 seconds and runs before the crypto self-test.
+
+Sealed in a cartridge the LEDs are the only output, and a burnt-out LED looks
+exactly like "nothing went wrong" — so this proves the reporting path itself
+still works before you rely on it. The order matters too: **if red comes first,
+the two LEDs are wired the opposite way round** from what the firmware believes,
+and every code you read afterwards will be inverted.
+
+Which LED blinks tells you the category before you count anything: **green (D6)
+for success, red (D8) for failure**. Red then stays lit until the next operation
+starts, so a failure is still visible long after the blinking stops — which
+matters when there is no STATUS button to replay it.
 
 Every outcome is a two-part code: **MAJOR long blinks, then MINOR short blinks**,
 repeated three times. Two short groups are much easier to count correctly than
@@ -118,6 +148,7 @@ one run of eleven blinks.
 | 3-2 | Write failed |
 | 3-3 | Write verify mismatch |
 | 3-4 | Re-encoded image failed its final check (nothing written) |
+| 3-5 | Written, but the cartridge's read-back does not decode — **restore it** |
 | 4-1 | No backup stored for this cartridge |
 | 4-2 | Stored backup does not validate |
 
@@ -142,7 +173,7 @@ does **not** catch a printer that is merely connected and idle, and then starts
 a transaction a moment later.
 
 **What hardware has to do.** Fit a **SERVICE / RUN switch** that physically
-disconnects D4 *and* the Nano's pull-up from the cartridge's 1-Wire line in the
+disconnects D7 *and* the Nano's pull-up from the cartridge's 1-Wire line in the
 RUN position. Two reasons, and the second is the one that bites:
 
 1. Only a physical break removes the two-master race entirely.
@@ -172,11 +203,16 @@ Change the pins / machine type at the top of `src/main.cpp`. The Prodigy key is
 Analog pins A0–A5 are read as noise to seed the random number generator, so
 leave them unconnected.
 
-> **Power the cartridge properly.** `OneWire::write()` is called with its
-> default `power = 0`, so the firmware never asserts a strong pull-up during the
-> copy-scratchpad programming window. Connect the cartridge EEPROM's VCC to +5 V
-> — don't run it parasite-powered off the data line, or the programming step
-> will be marginal.
+> **Parasite power is supported.** Where the chip has only two conductors
+> soldered to it — data and ground — it must draw its supply from the data line,
+> and a 4.7 kΩ pull-up cannot feed the ~10 ms `copy-scratchpad` programming
+> window. So `writeBlock()` sends the E-S byte with `power = 1`, which leaves the
+> AVR pin *driving* the line high for the whole of `tPROG`, then calls
+> `depower()`. That is the strong pull-up the DS2433 datasheet asks for.
+>
+> Connect VCC to +5 V if the part has a VCC wire — it is still the better
+> arrangement. The strong pull-up is what makes two-wire cartridges work, not a
+> reason to prefer them.
 
 ## Build
 
@@ -206,6 +242,10 @@ Arduino IDE: run `./make_arduino_sketch.sh` to flatten the tree into
 `arduino/nano_cartridge_refill/`, install the **OneWire** library by Paul
 Stoffregen, then open and upload the generated `.ino`.
 
+The wiring test in `tools/onewire_wiring_test/` is its own small project with
+its own `platformio.ini`, and is a single file in the Arduino IDE — no
+flattening step. It builds to 9756 B flash / 446 B RAM.
+
 Host-test the codec first (recommended, no hardware needed):
 ```
 g++ -std=c++11 -I lib/stratasys -I lib/backup -I test \
@@ -213,6 +253,25 @@ g++ -std=c++11 -I lib/stratasys -I lib/backup -I test \
     lib/backup/cartridge_backup.cpp \
     test/host_test.cpp -o /tmp/host_test && /tmp/host_test
 ```
+
+### What "verified" means after a write
+
+Success is never reported from the write call returning. `verifyWritten()` gates
+it on three separate checks, because on a parasite-powered part they fail
+differently:
+
+1. A fresh read-back of all 113 bytes matches the image we meant to write —
+   catching a row that never programmed.
+2. A **second** read-back 500 ms later still matches. This is the one that
+   matters for two-wire cartridges: a starved programming window can leave a
+   cell that reads back correctly moments after the copy and decays shortly
+   after. One immediate read cannot see that; two separated reads can.
+3. The bytes now on the cartridge **decode** as a valid cartridge for this
+   printer. Comparing against our own buffer only proves we wrote what we
+   intended — this proves the intention is something the printer will accept.
+
+Only then does the LED show 3 slow blinks. If step 3 fails, the code is **3-5**:
+something *was* written and it does not decode, so restore that cartridge.
 
 ## Safety
 
@@ -282,8 +341,9 @@ Alternatively, skip passthrough entirely: build here, then flash
 
 Watch `pio device monitor` at 115200. Expect the crypto self-test to pass and
 the recovery store to format itself. Then, **with no cartridge connected**, tap
-the button: it should report *no cartridge found* (3 fast blinks). That
-exercises the button, LED, EEPROM store and self-test with nothing at risk.
+the button: it should report *no cartridge found* (code **1-1**, repeated three
+times). That exercises the button, LED, EEPROM store and self-test with nothing
+at risk.
 
 Next, connect a cartridge and **tap** — a dry run reads and prints its serial
 and quantities without writing. Only once that looks right is it worth holding
