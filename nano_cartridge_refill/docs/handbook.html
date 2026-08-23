@@ -1,0 +1,430 @@
+<title>Cartridge Refill Handbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ink:      #14181C;
+    --ink-soft: #4A555D;
+    --paper:    #EEF1F2;
+    --plate:    #FFFFFF;
+    --steel:    #46606E;
+    --rule:     #C9D1D5;
+    --rule-soft:#DDE3E6;
+    --green:    #14803F;
+    --green-bg: #E3F1E8;
+    --red:      #B3372C;
+    --red-bg:   #F7E5E3;
+    --amber:    #A8721A;
+    --amber-bg: #F7EDDA;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink:      #E4EAED;
+      --ink-soft: #94A3AB;
+      --paper:    #0E1317;
+      --plate:    #171E23;
+      --steel:    #8AA7B5;
+      --rule:     #2F3A41;
+      --rule-soft:#232C32;
+      --green:    #3BBE72;
+      --green-bg: #12291D;
+      --red:      #E76A5E;
+      --red-bg:   #2C1A18;
+      --amber:    #D69B33;
+      --amber-bg: #2A2113;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink:      #E4EAED;
+    --ink-soft: #94A3AB;
+    --paper:    #0E1317;
+    --plate:    #171E23;
+    --steel:    #8AA7B5;
+    --rule:     #2F3A41;
+    --rule-soft:#232C32;
+    --green:    #3BBE72;
+    --green-bg: #12291D;
+    --red:      #E76A5E;
+    --red-bg:   #2C1A18;
+    --amber:    #D69B33;
+    --amber-bg: #2A2113;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.62;
+    margin: 0;
+    padding: 0 20px 80px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  header {
+    border-bottom: 3px solid var(--ink);
+    padding: 48px 0 20px;
+    margin-bottom: 40px;
+  }
+  .eyebrow {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .2em;
+    text-transform: uppercase;
+    color: var(--steel);
+    margin: 0 0 12px;
+  }
+  h1 {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: clamp(30px, 6vw, 44px);
+    font-weight: 700;
+    letter-spacing: -.015em;
+    line-height: 1.06;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .standfirst { font-size: 17px; color: var(--ink-soft); margin: 0; max-width: 60ch; }
+
+  .idplate {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 32px;
+    margin-top: 22px;
+    padding-top: 16px;
+    border-top: 1px solid var(--rule-soft);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--ink-soft);
+    font-variant-numeric: tabular-nums;
+  }
+  .idplate b { color: var(--ink); font-weight: 600; }
+
+  h2 {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .17em;
+    text-transform: uppercase;
+    color: var(--steel);
+    margin: 0 0 18px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  section { margin-bottom: 46px; }
+  p { margin: 0 0 16px; max-width: 66ch; }
+  p:last-child { margin-bottom: 0; }
+  strong { font-weight: 600; }
+
+  .steps { display: grid; gap: 14px; }
+  .step {
+    display: grid;
+    grid-template-columns: 116px 1fr;
+    gap: 18px;
+    align-items: baseline;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .step:last-child { border-bottom: 0; padding-bottom: 0; }
+  .step .act {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+  }
+  .step .txt { margin: 0; }
+  .step .txt em { font-style: normal; color: var(--ink-soft); }
+
+  .lamprow {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--plate);
+    border: 1px solid var(--rule);
+    padding: 14px 16px;
+    margin-bottom: 16px;
+  }
+  .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; border: 1px solid rgba(0,0,0,.25); }
+  .dot.g { background: var(--green); }
+  .dot.r { background: var(--red); }
+  .dot.off { background: transparent; border: 1px dashed var(--rule); }
+  .seq { font-family: "Archivo", system-ui, sans-serif; font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
+
+  .cards { display: grid; gap: 0; border: 1px solid var(--rule); background: var(--plate); }
+  .card { display: grid; grid-template-columns: 20px 1fr; gap: 14px; padding: 16px; border-bottom: 1px solid var(--rule-soft); }
+  .card:last-child { border-bottom: 0; }
+  .card .dot { margin-top: 5px; }
+  .card p { margin: 0; }
+  .card .lead { font-weight: 600; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--rule); background: var(--plate); }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; min-width: 480px; }
+  th, td { text-align: left; padding: 11px 16px; vertical-align: top; border-bottom: 1px solid var(--rule-soft); }
+  tbody tr:last-child td { border-bottom: 0; }
+  th {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--steel);
+    border-bottom: 1px solid var(--rule);
+  }
+  td.code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--red);
+    white-space: nowrap;
+    width: 1%;
+  }
+  tr.group td {
+    background: var(--rule-soft);
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--steel);
+    padding: 7px 16px;
+  }
+  .fix { color: var(--amber); font-weight: 600; }
+
+  .note {
+    border-left: 3px solid var(--steel);
+    background: var(--plate);
+    padding: 14px 18px;
+    margin: 0 0 16px;
+  }
+  .note.warn { border-left-color: var(--red); background: var(--red-bg); }
+  .note.good { border-left-color: var(--green); background: var(--green-bg); }
+  .note p { margin: 0; max-width: none; }
+  .note .hd {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+    margin: 0 0 6px;
+  }
+  .note.warn .hd { color: var(--red); }
+  .note.good .hd { color: var(--green); }
+  .note .hd.plain { color: var(--steel); }
+
+  /* The controls drawn in the order they physically sit, so the reader can hold
+     the page against the case rather than translating names into positions. */
+  .panel {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+    border: 1px solid var(--rule);
+    background: var(--plate);
+    padding: 22px 18px 18px;
+    margin-bottom: 16px;
+  }
+  .ctl { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .glyph { height: 22px; display: flex; align-items: center; justify-content: center; }
+  .lbl {
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: 10.5px; font-weight: 700; letter-spacing: .11em;
+    text-transform: uppercase; text-align: center; line-height: 1.3;
+  }
+  .lbl span { display: block; font-weight: 500; letter-spacing: .04em; text-transform: none; color: var(--ink-soft); font-size: 11px; }
+  .sw { width: 30px; height: 16px; border-radius: 9px; border: 2px solid var(--ink); position: relative; }
+  .sw::after {
+    content: ""; position: absolute; top: 2px; right: 2px;
+    width: 10px; height: 10px; border-radius: 50%; background: var(--ink);
+  }
+  .btn {
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 2px solid var(--ink); box-shadow: 0 0 0 3px var(--plate), 0 0 0 4px var(--rule);
+  }
+  .usb { width: 28px; height: 10px; border-radius: 5px; background: var(--ink-soft); }
+  .flow {
+    grid-column: 1 / -1;
+    margin-top: 16px; padding-top: 12px;
+    border-top: 1px dashed var(--rule);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; letter-spacing: .08em; color: var(--ink-soft); text-align: center;
+  }
+  @media (max-width: 560px) {
+    .panel { grid-template-columns: repeat(3, 1fr); row-gap: 20px; }
+  }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 18px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--ink-soft);
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+
+  @media (max-width: 560px) {
+    .step { grid-template-columns: 1fr; gap: 4px; }
+  }
+  @media print {
+    body { background: #fff; color: #000; }
+    section { break-inside: avoid; }
+    .dot, td.code, .fix { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Operating Handbook</p>
+    <h1>Cartridge Refill Unit</h1>
+    <p class="standfirst">This cartridge has a refill unit built into it. One button, two lights, and nothing to install. This covers everything it can tell you and what to do about it.</p>
+    <div class="idplate">
+      <span>POWER <b>USB-C</b></span>
+      <span>PRINTER <b>P-CLASS / PRODIGY</b></span>
+      <span>CAPACITY <b>56.30 cu.in</b></span>
+      <span>CHIP ID <b>230bddf102000053</b></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>The panel</h2>
+    <div class="panel">
+      <div class="ctl"><span class="glyph"><span class="dot g"></span></span><span class="lbl">Green<span>light</span></span></div>
+      <div class="ctl"><span class="glyph"><span class="dot r"></span></span><span class="lbl">Red<span>light</span></span></div>
+      <div class="ctl"><span class="glyph"><span class="sw"></span></span><span class="lbl">Switch<span>chip on / off</span></span></div>
+      <div class="ctl"><span class="glyph"><span class="btn"></span></span><span class="lbl">Button<span>does everything</span></span></div>
+      <div class="ctl"><span class="glyph"><span class="usb"></span></span><span class="lbl">USB-C<span>power</span></span></div>
+      <div class="flow">IN THE ORDER THEY SIT ON THE CASE, LEFT TO RIGHT</div>
+    </div>
+    <p>Five things, and only two of them you touch: the switch and the button. The switch sits between the red light and the button; the button sits between the switch and the USB-C socket.</p>
+  </section>
+
+  <section>
+    <h2>Before you start</h2>
+    <div class="steps">
+      <div class="step">
+        <span class="act">1 · Switch on</span>
+        <p class="txt">The switch — between the red light and the button — connects the unit to the cartridge's chip. <strong>It must be on.</strong> <em>With it off the unit cannot see the cartridge at all, and everything you try reports code 1-1.</em></p>
+      </div>
+      <div class="step">
+        <span class="act">2 · Plug in</span>
+        <p class="txt">Power is <strong>USB-C</strong>. The unit starts as soon as it has power, and you will see the light test straight away.</p>
+      </div>
+    </div>
+    <div class="note warn" style="margin-top:20px">
+      <p class="hd">Switch it off again before the cartridge goes in the printer</p>
+      <p>Left on, the unit holds the chip's data line down and the printer cannot read the cartridge at all — it will report a missing or unreadable cartridge. Off is the normal position for printing; on is only for refilling.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The button</h2>
+    <div class="steps">
+      <div class="step">
+        <span class="act">Tap</span>
+        <p class="txt">Check the cartridge and report what it holds. <em>Reads only — it cannot change anything, so use it freely.</em></p>
+      </div>
+      <div class="step">
+        <span class="act">Hold 1 second</span>
+        <p class="txt">Refill it. The green light comes on solid while it works, then blinks three times when it is done.</p>
+      </div>
+      <div class="step">
+        <span class="act">Hold while plugging in</span>
+        <p class="txt">Restore. Hold the button down, then plug in the USB-C, and keep holding. This puts back the last known-good contents, and is how you recover from a failed refill.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Every time it powers on</h2>
+    <div class="lamprow">
+      <span class="dot g"></span><span class="dot g"></span>
+      <span class="dot off"></span>
+      <span class="dot r"></span><span class="dot r"></span>
+      <span class="dot off"></span>
+      <span class="dot g"></span><span class="dot r"></span>
+      <span class="seq">Green ×2 · Red ×2 · Both</span>
+    </div>
+    <p>Every time you plug in the USB-C, the unit tests its own lights first, so you always know the lights themselves still work. It takes about two and a half seconds.</p>
+    <p>If a light never comes on, it is dead — and every message it would have carried is lost. If red runs before green, the two lights are wired the wrong way round and every code you read afterwards will be back to front.</p>
+  </section>
+
+  <section>
+    <h2>Reading the lights</h2>
+    <div class="cards">
+      <div class="card">
+        <span class="dot g"></span>
+        <p><span class="lead">Green, steady.</span> Working. Leave it alone until it stops.</p>
+      </div>
+      <div class="card">
+        <span class="dot g"></span>
+        <p><span class="lead">Green, slow blinks.</span> Finished, and all is well. Count them: <strong>2</strong> checked · <strong>3</strong> refilled · <strong>4</strong> restored.</p>
+      </div>
+      <div class="card">
+        <span class="dot r"></span>
+        <p><span class="lead">Red blinks.</span> Something went wrong. It gives a few <strong>long</strong> blinks, a pause, then a few <strong>short</strong> ones — count each. Long-then-short is the code, so two long and three short is <strong>2-3</strong>. It repeats three times, then red stays lit.</p>
+      </div>
+      <div class="card">
+        <span class="dot r"></span>
+        <p><span class="lead">Red stays on.</span> The last thing it did failed. It stays lit until the next time you use it, so this still tells you the truth hours later.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What the codes mean</h2>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Code</th><th>Meaning</th><th>What to do</th></tr>
+        </thead>
+        <tbody>
+          <tr class="group"><td colspan="3">Cannot reach the chip</td></tr>
+          <tr><td class="code">1-1</td><td>No chip found</td><td><span class="fix">Check the switch is on</span> — the one between the red light and the button. This is nearly always the cause.</td></tr>
+          <tr><td class="code">1-2</td><td>Could not read the chip</td><td>Try once more. Repeat failures mean a connection problem inside.</td></tr>
+          <tr><td class="code">1-3</td><td>Something else is using the chip</td><td>Take the cartridge out of the printer, then try again.</td></tr>
+
+          <tr class="group"><td colspan="3">The cartridge itself</td></tr>
+          <tr><td class="code">2-1</td><td>Not a P-class cartridge</td><td>Wrong printer family. Nothing was changed — do not retry.</td></tr>
+          <tr><td class="code">2-2</td><td>Contents are damaged, and a backup exists</td><td><span class="fix">Restore it</span> — hold the button while powering on.</td></tr>
+          <tr><td class="code">2-3</td><td>Restore refused; contents are already fine</td><td>Nothing to do. This is the unit protecting good data.</td></tr>
+
+          <tr class="group"><td colspan="3">While writing</td></tr>
+          <tr><td class="code">3-1</td><td>Could not save a safety copy first</td><td>Nothing was written. Safe to retry.</td></tr>
+          <tr><td class="code">3-2</td><td>The write failed</td><td><span class="fix">Restore it</span>, then try the refill again.</td></tr>
+          <tr><td class="code">3-3</td><td>Written data did not read back correctly</td><td><span class="fix">Restore it</span>, then try again.</td></tr>
+          <tr><td class="code">3-4</td><td>Final checks failed before writing</td><td>Nothing was written. The cartridge is untouched.</td></tr>
+          <tr><td class="code">3-5</td><td>It wrote, but the result is not valid</td><td><span class="fix">Restore it</span>. Do not put this cartridge in a printer first.</td></tr>
+
+          <tr class="group"><td colspan="3">While restoring</td></tr>
+          <tr><td class="code">4-1</td><td>No saved copy for this cartridge</td><td>Nothing to restore from. The cartridge is unchanged.</td></tr>
+          <tr><td class="code">4-2</td><td>The saved copy is itself damaged</td><td>It refused rather than write bad data. Cartridge unchanged.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>If something goes wrong</h2>
+    <div class="note warn">
+      <p class="hd">Red flashing fast and non-stop from the moment it powers on</p>
+      <p>The unit failed its own internal self-test and will not operate at all. This is not a cartridge fault. Do not use it.</p>
+    </div>
+    <div class="note good">
+      <p class="hd">Recovery is always the same</p>
+      <p>Switch on, hold the button down, plug in the USB-C, and keep holding. That restores the last known-good contents. The unit saves a copy before every write, so there is always something to go back to.</p>
+    </div>
+    <div class="note">
+      <p class="hd plain">A refused operation is a working unit</p>
+      <p>Codes 2-1, 2-3, 3-1, 3-4, 4-1 and 4-2 all mean it stopped <em>before</em> changing anything. Refusing to write is the unit doing its job, not failing at it.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>How a refill works</h2>
+    <p>When you hold the button, the unit reads the cartridge, checks the contents really are a valid P-class cartridge, and saves a copy of them to its own internal memory. If that copy will not save, it stops there and writes nothing.</p>
+    <p>It then sets the remaining material back to full, gives the cartridge a fresh serial number, and writes it back. Afterwards it reads the chip twice — half a second apart — and checks the result is genuinely valid before it shows you three green blinks.</p>
+    <p>That second read matters: it catches data that looked right immediately after writing but did not hold. <strong>Three green blinks means the cartridge was read back and confirmed</strong>, not merely that a write was attempted.</p>
+  </section>
+
+  <footer>
+    <span>P-CLASS REFILL UNIT</span>
+    <span>REV 2026-08-22</span>
+  </footer>
+
+</div>
