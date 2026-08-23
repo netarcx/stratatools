@@ -218,11 +218,12 @@ leave them unconnected.
 
 Verified with PlatformIO 6.1.19 / avr-gcc (Arduino AVR core). Current footprint:
 
-| Env        | Board            | RAM          | Flash           |
-|------------|------------------|--------------|-----------------|
-| `nano`     | nanoatmega328new | 487 / 2048 B | 17112 / 30720 B |
-| `nano_old` | nanoatmega328    | 487 / 2048 B | 17112 / 30720 B |
-| `uno`      | uno              | 487 / 2048 B | 17112 / 32256 B |
+| Env          | Board              | RAM           | Flash           |
+|--------------|--------------------|---------------|-----------------|
+| `nano`       | nanoatmega328new   | 487 / 2048 B  | 18624 / 30720 B |
+| `nano_old`   | nanoatmega328      | 487 / 2048 B  | 18624 / 30720 B |
+| `uno`        | uno                | 487 / 2048 B  | 18624 / 32256 B |
+| `promicro16` | sparkfun_promicro16| 452 / 2560 B  | 20674 / 28672 B |
 
 That 487 B is static allocation; peak stack is roughly another 550 B, leaving
 about 1 KB of headroom.
@@ -272,6 +273,32 @@ differently:
 
 Only then does the LED show 3 slow blinks. If step 3 fails, the code is **3-5**:
 something *was* written and it does not decode, so restore that cartridge.
+
+## Pro Micro (ATmega32U4)
+
+The same firmware runs on a Pro Micro unchanged, and **the wiring is identical** —
+it brings out D2–D10, so every pin is available at the same number. `pio run -e
+promicro16 -t upload`, or compile it in the Arduino IDE as a Leonardo.
+
+Three things differ, all handled by the `__AVR_ATmega32U4__` block at the top of
+`src/main.cpp`:
+
+- **No onboard LED mirror.** A Pro Micro does not bring D13 out to a pad, so
+  `ONBOARD_LED_PIN` is set to 255 and `ledWrite()` treats that as a no-op. The
+  green and red LEDs work exactly as before — only the onboard mirror is gone.
+- **Native USB.** Never add `while (!Serial)`: with no host attached that never
+  becomes true, and a sealed unit would sit waiting instead of refilling on a
+  button press. Writes to an unattached CDC port are discarded, which is fine.
+- **Less flash.** Caterina takes 4 KB and the USB stack ~2 KB, so the ceiling is
+  28672 B rather than 30720 B. Currently 72% full.
+
+Use the **5 V / 16 MHz** variant. On a parasite-powered cartridge the strong
+pull-up that carries the chip through its programming window has meaningfully
+more to give at 5 V than at 3.3 V.
+
+Uploading also differs: the 32U4 enters its bootloader on a 1200-baud touch and
+re-enumerates on a different port number. `arduino-cli` and PlatformIO both
+handle this, but the port you upload to is not the port you monitor.
 
 ## Safety
 

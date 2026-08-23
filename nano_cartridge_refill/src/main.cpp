@@ -30,14 +30,16 @@
  * Continuous fast blinking at power-up = crypto self-test failed; it will not
  * operate at all in that state.
  *
- * WIRING (Arduino Nano / Uno / Pro Mini -- any ATmega328P board):
+ * WIRING (Arduino Nano / Uno / Pro Mini / Pro Micro -- identical on all of
+ * them; the Pro Micro brings out D2-D10 at the same numbers):
  *   D7  1-Wire data, 4.7k pull-up to +5V   (see the README before adding a
  *                                           second pull-up alongside a printer)
  *   D9  ACTION button to GND               (internal pull-up)
  *   D2  STATUS button to GND               (internal pull-up; optional)
  *   D6  GREEN LED, via ~330R to GND  (success, and solid while busy)
  *   D8  RED LED,   via ~330R to GND  (failures; stays lit until the next run)
- *   D13 onboard LED, mirrors whichever is active
+ *   D13 onboard LED, mirrors whichever is active (Nano only -- a Pro Micro
+ *       does not bring D13 out, so it has no onboard mirror)
  *
  * NOTE ON 5V: a Nano runs its I/O at 5 V. The DS2433 in the cartridge is rated
  * 2.8-5.25 V, so pull the 1-Wire line up to the Nano's +5V rail -- NOT to 3.3V.
@@ -55,12 +57,33 @@
 #include "f64.h"
 #include "des.h"
 
+// ---- Board configuration ---------------------------------------------------
+// Two targets: the Nano (ATmega328P) and the Pro Micro (ATmega32U4). The Pro
+// Micro brings out D2-D10, so every pin below is available at the same number
+// and the wiring is identical between them.
+//
+// One thing genuinely differs. The Nano's onboard LED is on D13; on a Pro Micro
+// D13 is not brought out to a pad at all, so there is nothing to mirror to and
+// the onboard mirror is disabled rather than writing into the void.
+//
+// The 32U4's USB is native, which matters in one way that could hang a sealed
+// unit: never wait on `while (!Serial)`. With no host attached that never
+// becomes true, and the firmware would sit there forever instead of refilling
+// on a button press. Writes to an unattached CDC port are simply discarded,
+// which is what we want.
+#if defined(__AVR_ATmega32U4__)
+  #define BOARD_NAME F("Pro Micro (ATmega32U4)")
+  static const uint8_t ONBOARD_LED_PIN = 255;          // no usable onboard LED
+#else
+  #define BOARD_NAME F("Nano (ATmega328P)")
+  static const uint8_t ONBOARD_LED_PIN = LED_BUILTIN;  // D13
+#endif
+
 // ---- Configuration --------------------------------------------------------
 static const uint8_t ONEWIRE_PIN = 7;
 static const uint8_t BUTTON_PIN  = 9;   // ACTION button to GND; pressed = LOW
 static const uint8_t STATUS_PIN  = 2;   // STATUS button to GND (optional -- reads
                                         // high and stays inert if not wired)
-static const uint8_t LED_PIN     = LED_BUILTIN;   // D13, onboard
 static const uint8_t OK_LED_PIN  = 6;   // GREEN LED + ~330R to GND
 static const uint8_t ERR_LED_PIN = 8;   // RED LED   + ~330R to GND
 static const bool    LED_ACTIVE_LOW = false;      // both LEDs are active-high
@@ -113,11 +136,12 @@ static uint32_t g_rng;
 static uint8_t g_activeLed = OK_LED_PIN;
 
 static void ledWrite(uint8_t pin, bool on) {
+    if (pin == 255) return;                 // board has no such LED
     digitalWrite(pin, (on ^ LED_ACTIVE_LOW) ? HIGH : LOW);
 }
 
 static void led(bool on) {
-    ledWrite(LED_PIN, on);              // onboard mirrors whatever is active
+    ledWrite(ONBOARD_LED_PIN, on);              // onboard mirrors whatever is active
     ledWrite(g_activeLed, on);
 }
 
@@ -153,9 +177,9 @@ static void lampTest() {
         ledWrite(ERR_LED_PIN, false); delay(150);
     }
     delay(250);
-    ledWrite(OK_LED_PIN, true);  ledWrite(ERR_LED_PIN, true);  ledWrite(LED_PIN, true);
+    ledWrite(OK_LED_PIN, true);  ledWrite(ERR_LED_PIN, true);  ledWrite(ONBOARD_LED_PIN, true);
     delay(500);
-    ledWrite(OK_LED_PIN, false); ledWrite(ERR_LED_PIN, false); ledWrite(LED_PIN, false);
+    ledWrite(OK_LED_PIN, false); ledWrite(ERR_LED_PIN, false); ledWrite(ONBOARD_LED_PIN, false);
 }
 
 // ---- Result codes ---------------------------------------------------------
@@ -689,7 +713,7 @@ static bool restoreGesture() {
 void setup() {
     Serial.begin(115200);
     delay(300);
-    pinMode(LED_PIN, OUTPUT);
+    if (ONBOARD_LED_PIN != 255) pinMode(ONBOARD_LED_PIN, OUTPUT);
     pinMode(OK_LED_PIN, OUTPUT);
     pinMode(ERR_LED_PIN, OUTPUT);
     pinMode(BUTTON_PIN, INPUT_PULLUP);
@@ -699,7 +723,8 @@ void setup() {
 
     memcpy_P(g_machine, MACHINE, 8);
 
-    Serial.println(F("\nStratasys standalone refill (Arduino Nano) - PRODIGY"));
+    Serial.print(F("\nStratasys standalone refill - PRODIGY - "));
+    Serial.println(BOARD_NAME);
 
     Serial.println(F("Lamp test: GREEN x2, then RED x2, then both."));
     Serial.println(F("If red comes first, the two LEDs are swapped."));
